@@ -73,6 +73,16 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "PRE-FLIGHT..." -ForegroundColor Yellow
+          if (-not (Get-Command 7z -EA SilentlyContinue)) {
+              choco install 7zip -y --no-progress --limit-output
+              $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+          }
+          if (Get-Command 7z -EA SilentlyContinue) {
+              "HAS_7Z=1" >> "$env:GITHUB_ENV"
+              Write-Host "7z OK" -ForegroundColor Green
+          } else {
+              "HAS_7Z=0" >> "$env:GITHUB_ENV"
+          }
           $build = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuild
           "OS_BUILD=$build" >> "$env:GITHUB_ENV"
           Write-Host "OS Build: $build" -ForegroundColor Green
@@ -111,18 +121,8 @@ jobs:
 
           $targetRelTag = "zenova-storage-$cleanId"
           $targetBranch = "zenova-state-$cleanId"
-
-          $null = gh release view "$targetRelTag" --repo "$env:GH_REPO" 2>&1
-          $hasTarget = (($LASTEXITCODE) -eq 0)
-          $global:LASTEXITCODE = 0
-
-          if ($hasTarget) {
-              "RELEASE_TAG=$targetRelTag" >> "$env:GITHUB_ENV"
-              "STATE_BRANCH=$targetBranch" >> "$env:GITHUB_ENV"
-          } else {
-              "RELEASE_TAG=$targetRelTag" >> "$env:GITHUB_ENV"
-              "STATE_BRANCH=$targetBranch" >> "$env:GITHUB_ENV"
-          }
+          "RELEASE_TAG=$targetRelTag" >> "$env:GITHUB_ENV"
+          "STATE_BRANCH=$targetBranch" >> "$env:GITHUB_ENV"
           "MACHINE_ID=$cleanId" >> "$env:GITHUB_ENV"
 
           $requestedImage = "${{ inputs.windows_image }}"
@@ -360,11 +360,34 @@ jobs:
               windowsImage = "$env:WINDOWS_IMAGE_RESOLVED"
               startUtc = (Get-Date).ToUniversalTime().ToString('o')
               durationMinutes = [int]"$env:TOTAL_MINUTES"
+              ready = $true
+              readyUtc = (Get-Date).ToUniversalTime().ToString('o')
           }
           $state | ConvertTo-Json -Depth 5 | Set-Content "$stateFile" -Encoding UTF8
 
           'SESSION_READY=1' >> "$env:GITHUB_ENV"
           Write-Host "User ready. Pass source: $source" -ForegroundColor Green
+          exit 0
+
+      - name: Publish State to Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $stateFile = "$env:SHARED_STATE_FILE"
+          if (-not (Test-Path "$stateFile")) { exit 0 }
+
+          $tempDir = "$env:RUNNER_TEMP\state-publish"
+          Remove-Item "$tempDir" -Recurse -Force -EA SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "$tempDir" | Out-Null
+          Copy-Item "$stateFile" "$tempDir\state.json" -Force
+
+          foreach ($t in 1..3) {
+              gh release upload "$env:RELEASE_TAG" "$tempDir\state.json" --repo "$env:GH_REPO" --clobber 2>&1 | Out-Null
+              if (($LASTEXITCODE) -eq 0) { break }
+              Start-Sleep 5
+          }
+          Write-Host "State published" -ForegroundColor Green
           exit 0
 
       - name: PUBLISH CONNECTION INFO
@@ -392,20 +415,6 @@ jobs:
           Write-Host "==============================================================" -ForegroundColor Cyan
           Write-Host ""
           Write-Host "::notice title=Zenova Ready::$env:MACHINE_ID | RDP: $env:TAILSCALE_IP:3389"
-          Write-Host "::notice title=Info::$env:TAILSCALE_IP|$env:RDP_USER|$pt"
-
-          # Ghi vao state file de bot doc
-          $stateFile = "$env:SHARED_STATE_FILE"
-          if (Test-Path "$stateFile") {
-              try {
-                  $st = Get-Content -Raw "$stateFile" | ConvertFrom-Json
-                  $st.rdpUser = "$env:RDP_USER"
-                  $st.rdpPass = "$pt"
-                  $st.readyUtc = (Get-Date).ToUniversalTime().ToString('o')
-                  $st.ready = $true
-                  $st | ConvertTo-Json -Depth 5 | Set-Content "$stateFile" -Encoding UTF8
-              } catch {}
-          }
           exit 0
 
       - name: Keepalive
@@ -426,4 +435,13 @@ jobs:
               if ((Get-Service 'TermService' -EA SilentlyContinue).Status -ne 'Running') { Start-Service 'TermService' -EA SilentlyContinue }
               Start-Sleep 15
           }
+          exit 0
+
+      - name: Save Final
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Write-Host "Session ended for $env:MACHINE_ID" -ForegroundColor Yellow
           exit 0
