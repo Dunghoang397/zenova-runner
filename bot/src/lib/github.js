@@ -1,4 +1,5 @@
-// ZENOVA SHOP - GitHub API Wrapper
+// ZENOVA SHOP - GitHub API v14.1
+// FIX: KHONG CHO workflow completed - chi cho state.json (tranh Keepalive)
 import { Octokit } from '@octokit/rest';
 import { logger } from './logger.js';
 
@@ -11,35 +12,50 @@ const cfg = {
 
 export const octokit = new Octokit({
   auth: process.env.GH_TOKEN,
-  userAgent: 'zenova-shop-bot/9.0'
+  userAgent: 'zenova-shop-bot/14.1'
 });
 
 const tag = (id) => `zenova-storage-${id}`;
 const branch = (id) => `zenova-state-${id}`;
 
-// ─── Dispatch workflow ───
+async function ghApi(path, options = {}) {
+  const url = 'https://api.github.com' + path;
+  const headers = {
+    'Accept': 'application/vnd.github+json',
+    'Authorization': 'Bearer ' + process.env.GH_TOKEN,
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'zenova-shop-bot/14.1',
+    ...(options.headers || {})
+  };
+  const res = await fetch(url, { ...options, headers });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error('HTTP ' + res.status + ': ' + txt.slice(0, 200));
+  }
+  if (res.status === 204) return null;
+  return await res.json();
+}
+
+// ═══ DISPATCH ═══
 export async function dispatchCreate(inputs) {
   if (!/^[a-z0-9\-]+$/.test(inputs.machine_id)) {
     throw new Error('Ten may chi duoc chua a-z, 0-9, dau gach');
   }
   logger.cmd('Dispatch tao may: ' + inputs.machine_id);
-  await octokit.actions.createWorkflowDispatch({
-    owner: cfg.owner,
-    repo: cfg.repo,
-    workflow_id: cfg.workflow,
-    ref: cfg.branch,
-    inputs
-  });
+  await ghApi(
+    '/repos/' + cfg.owner + '/' + cfg.repo + '/actions/workflows/' + cfg.workflow + '/dispatches',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref: cfg.branch, inputs })
+    }
+  );
   logger.ok('Da dispatch: ' + inputs.machine_id);
 }
 
-// ─── List machines ───
+// ═══ LIST MACHINES ═══
 export async function listMachines() {
-  const { data: releases } = await octokit.repos.listReleases({
-    owner: cfg.owner,
-    repo: cfg.repo,
-    per_page: 100
-  });
+  const releases = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases?per_page=100');
   return releases
     .filter(r => r.tag_name.startsWith('zenova-storage-'))
     .map(r => ({
@@ -48,60 +64,54 @@ export async function listMachines() {
       releaseId: r.id,
       created: r.created_at,
       updated: r.updated_at,
-      chunks: r.assets.filter(a => a.name.startsWith('zenova-drive')).length,
-      totalSize: r.assets.filter(a => a.name.startsWith('zenova-drive')).reduce((s, a) => s + a.size, 0),
       url: r.html_url
     }));
 }
 
-// ─── Get manifest ───
-export async function getManifest(machineId) {
+// ═══ GET STATE.JSON ═══
+export async function getStateJson(machineId) {
   try {
-    const { data: rel } = await octokit.repos.getReleaseByTag({
-      owner: cfg.owner,
-      repo: cfg.repo,
-      tag: tag(machineId)
-    });
-    const mf = rel.assets.find(a => a.name === 'drive-manifest.json');
-    if (!mf) return null;
-    const res = await fetch(mf.browser_download_url, {
+    const rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
+    const stateAsset = rel.assets.find(a => a.name === 'state.json');
+    if (!stateAsset) return null;
+    const res = await fetch(stateAsset.browser_download_url + '?t=' + Date.now(), {
       headers: { Authorization: 'Bearer ' + process.env.GH_TOKEN }
     });
     if (!res.ok) return null;
     return await res.json();
   } catch (e) {
-    logger.dbg('getManifest fail: ' + e.message);
+    logger.dbg('getStateJson fail: ' + e.message);
     return null;
   }
 }
 
-// ─── Get user's machine ───
+export async function getManifest(machineId) {
+  return getStateJson(machineId);
+}
+
+// ═══ USER MACHINE ═══
 export async function getUserMachine(discordUserId) {
   const machines = await listMachines();
   for (const m of machines.slice(0, 30)) {
-    const manifest = await getManifest(m.id);
-    if (manifest?.ownerDiscordId === discordUserId) {
-      return { ...m, manifest };
+    const state = await getStateJson(m.id);
+    if (state?.ownerDiscordId === discordUserId && state?.ready) {
+      return { ...m, manifest: state };
     }
   }
   return null;
 }
 
-// ─── Check owner ───
 export async function isMachineOwner(discordUserId, machineId) {
-  const manifest = await getManifest(machineId);
-  if (!manifest) return false;
-  return manifest.ownerDiscordId === discordUserId;
+  const state = await getStateJson(machineId);
+  if (!state) return false;
+  return state.ownerDiscordId === discordUserId;
 }
 
-// ─── List active runs ───
+// ═══ LIST RUNS ═══
 export async function listActiveRuns() {
-  const { data } = await octokit.actions.listWorkflowRuns({
-    owner: cfg.owner,
-    repo: cfg.repo,
-    workflow_id: cfg.workflow,
-    per_page: 50
-  });
+  const data = await ghApi(
+    '/repos/' + cfg.owner + '/' + cfg.repo + '/actions/workflows/' + cfg.workflow + '/runs?per_page=50'
+  );
   return (data.workflow_runs || [])
     .filter(r => ['in_progress', 'queued', 'waiting', 'requested'].includes(r.status))
     .map(r => ({
@@ -113,181 +123,121 @@ export async function listActiveRuns() {
     }));
 }
 
-// ─── List recent runs ───
-export async function listRecentRuns(limit = 15) {
-  const { data } = await octokit.actions.listWorkflowRuns({
-    owner: cfg.owner,
-    repo: cfg.repo,
-    workflow_id: cfg.workflow,
-    per_page: limit
-  });
+export async function listRecentRuns(limit = 20) {
+  const data = await ghApi(
+    '/repos/' + cfg.owner + '/' + cfg.repo + '/actions/workflows/' + cfg.workflow + '/runs?per_page=' + limit
+  );
   return (data.workflow_runs || []).map(r => ({
     id: r.id,
     number: r.run_number,
     status: r.status,
     conclusion: r.conclusion,
     started: r.run_started_at || r.created_at,
-    url: r.html_url
+    updated: r.updated_at,
+    url: r.html_url,
+    event: r.event
   }));
 }
 
-// ─── Wait for workflow complete + get info ───
-export async function waitForWorkflowCompletion(machineId, maxWaitMs = 300000, intervalMs = 15000) {
+// ═══════════════════════════════════════════════════════
+// WAIT STATE.JSON — KHONG CHO WORKFLOW COMPLETED
+// Keepalive co the chay 6h nhung state.json xuat hien som (3-5 phut)
+// ═══════════════════════════════════════════════════════
+export async function waitForWorkflowCompletion(machineId, maxWaitMs = 900000, intervalMs = 6000, onProgress = null) {
   const startTime = Date.now();
-  const initialRuns = await listRecentRuns(5);
-  const initialRunId = initialRuns[0]?.id;
+  logger.info('Bat dau cho state.json cho may: ' + machineId);
 
-  logger.info('Cho workflow bat dau (run cu: ' + initialRunId + ')...');
+  // Doi 6s cho workflow bat dau
+  await new Promise(r => setTimeout(r, 6000));
 
-  let newRun = null;
+  let attempt = 0;
+  const maxAttempts = Math.floor(maxWaitMs / intervalMs);
+  let lastLogAt = 0;
 
-  // Cho run moi xuat hien (toi da 60 giay)
-  for (let i = 0; i < 6; i++) {
-    await new Promise(r => setTimeout(r, 10000));
-    const runs = await listRecentRuns(5);
-    if (runs[0] && runs[0].id !== initialRunId) {
-      newRun = runs[0];
-      logger.info('Workflow moi bat dau: run #' + newRun.number);
-      break;
-    }
-  }
-
-  if (!newRun) {
-    logger.warn('Khong tim thay run moi');
-    return { success: false, error: 'Workflow khong bat dau' };
-  }
-
-  // Cho run hoan thanh
   while (Date.now() - startTime < maxWaitMs) {
-    const runs = await listRecentRuns(5);
-    const currentRun = runs.find(r => r.id === newRun.id);
+    attempt++;
 
-    if (!currentRun) {
-      await new Promise(r => setTimeout(r, intervalMs));
-      continue;
-    }
+    try {
+      const state = await getStateJson(machineId);
 
-    logger.info('Run #' + currentRun.number + ' status: ' + currentRun.status + ' / ' + (currentRun.conclusion || '...'));
-
-    if (currentRun.status === 'completed') {
-      if (currentRun.conclusion === 'success') {
-        // Đợi thêm 10s cho state file được ghi
-        await new Promise(r => setTimeout(r, 10000));
-
-        // Lấy manifest
-        const manifest = await getManifest(machineId);
-
-        if (manifest) {
-          return {
-            success: true,
-            manifest,
-            runUrl: currentRun.url,
-            runNumber: currentRun.number
-          };
-        } else {
-          return {
-            success: true,
-            manifest: null,
-            runUrl: currentRun.url,
-            runNumber: currentRun.number
-          };
-        }
-      } else {
-        return {
-          success: false,
-          error: 'Workflow ' + currentRun.conclusion,
-          runUrl: currentRun.url,
-          runNumber: currentRun.number
-        };
+      // Callback progress
+      if (onProgress) {
+        try { await onProgress({ attempt, maxAttempts, state, elapsed: Date.now() - startTime }); } catch {}
       }
+
+      // SUCCESS: state ready + co IP
+      if (state && state.ready === true && state.tailscaleIp && state.tailscaleIp !== '?') {
+        logger.ok('LAY DUOC STATE.JSON (attempt ' + attempt + ', ' + Math.round((Date.now() - startTime) / 1000) + 's)');
+        logger.info('IP: ' + state.tailscaleIp);
+        return { success: true, manifest: state, attempts: attempt, elapsed: Date.now() - startTime };
+      }
+
+      // Log moi 10 attempts (~60s)
+      if (attempt - lastLogAt >= 10) {
+        if (state?.status === 'starting') {
+          logger.info('Workflow dang setup (' + attempt + '/' + maxAttempts + ', ' + Math.round((Date.now() - startTime) / 1000) + 's)');
+        } else if (state?.ready === true) {
+          logger.info('State ready nhung thieu IP (' + attempt + '/' + maxAttempts + ')');
+        } else {
+          logger.info('Chua co state.json (' + attempt + '/' + maxAttempts + ', ' + Math.round((Date.now() - startTime) / 1000) + 's)');
+        }
+        lastLogAt = attempt;
+      }
+    } catch (e) {
+      logger.dbg('Check state fail: ' + e.message);
     }
 
     await new Promise(r => setTimeout(r, intervalMs));
   }
 
-  return { success: false, error: 'Timeout cho workflow' };
+  logger.warn('Timeout sau ' + (maxWaitMs / 1000) + 's');
+  return {
+    success: false,
+    error: 'Timeout ' + (maxWaitMs / 1000) + 's. Kiem tra GitHub Actions.',
+    lastState: null
+  };
 }
 
-// ─── Delete machine + trigger workflow cleanup ───
+// ═══ DELETE MACHINE ═══
 export async function deleteMachine(machineId, requesterId, isAdmin = false) {
   if (!isAdmin) {
     const owned = await isMachineOwner(requesterId, machineId);
-    if (!owned) {
-      throw new Error('Ban khong phai chu cua may nay');
-    }
+    if (!owned) throw new Error('Ban khong phai chu cua may nay');
   }
 
-  // Buoc 1: Trigger workflow cancel + save
   try {
-    const runs = await listActiveRuns();
-    // Tim run cua may nay (khong co cach map truc tiep, cancel tat ca)
-    for (const r of runs) {
+    const runs = await listRecentRuns(20);
+    const active = runs.filter(r => ['in_progress', 'queued'].includes(r.status));
+    for (const r of active) {
       try {
-        await octokit.actions.cancelWorkflowRun({
-          owner: cfg.owner,
-          repo: cfg.repo,
-          run_id: r.id
-        });
-        logger.info('Cancelled run ' + r.number);
+        await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + r.id + '/cancel', { method: 'POST' });
       } catch {}
     }
+    await new Promise(r => setTimeout(r, 5000));
+  } catch (e) {}
 
-    // Doi 10s cho save cuoi
-    await new Promise(r => setTimeout(r, 10000));
-  } catch (e) {
-    logger.dbg('Cancel runs fail: ' + e.message);
-  }
-
-  // Buoc 2: Xoa release
   try {
-    const { data: rel } = await octokit.repos.getReleaseByTag({
-      owner: cfg.owner,
-      repo: cfg.repo,
-      tag: tag(machineId)
-    });
-    await octokit.repos.deleteRelease({
-      owner: cfg.owner,
-      repo: cfg.repo,
-      release_id: rel.id
-    });
-    logger.info('Deleted release ' + tag(machineId));
-  } catch (e) {
-    logger.dbg('Delete release fail: ' + e.message);
-  }
+    const rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
+    await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/' + rel.id, { method: 'DELETE' });
+  } catch (e) {}
 
-  // Buoc 3: Xoa branch state
   try {
-    await octokit.git.deleteRef({
-      owner: cfg.owner,
-      repo: cfg.repo,
-      ref: 'heads/' + branch(machineId)
-    });
-    logger.info('Deleted branch ' + branch(machineId));
-  } catch (e) {
-    logger.dbg('Delete branch fail: ' + e.message);
-  }
+    await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/git/refs/heads/' + branch(machineId), { method: 'DELETE' });
+  } catch (e) {}
 
   logger.ok('Da xoa may: ' + machineId);
 }
 
-// ─── Cancel run ───
+// ═══ CANCEL RUN ═══
 export async function cancelRun(runId) {
-  await octokit.actions.cancelWorkflowRun({
-    owner: cfg.owner,
-    repo: cfg.repo,
-    run_id: runId
-  });
+  await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + runId + '/cancel', { method: 'POST' });
   logger.ok('Cancelled run ' + runId);
 }
 
-// ─── Get log ───
+// ═══ GET LOG ═══
 export async function getRunLogTail(runId, lines = 80) {
   try {
-    const { data: jobs } = await octokit.actions.listJobsForWorkflowRun({
-      owner: cfg.owner,
-      repo: cfg.repo,
-      run_id: runId
-    });
+    const jobs = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + runId + '/jobs');
     const logs = [];
     for (const job of jobs.jobs || []) {
       try {
@@ -296,7 +246,8 @@ export async function getRunLogTail(runId, lines = 80) {
           {
             headers: {
               Authorization: 'Bearer ' + process.env.GH_TOKEN,
-              Accept: 'application/vnd.github+json'
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28'
             },
             redirect: 'follow'
           }

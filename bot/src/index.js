@@ -1,4 +1,4 @@
-// ZENOVA SHOP - Bot Entry Point
+// ZENOVA SHOP - Bot v12 FINAL
 import 'dotenv/config';
 import {
   Client, GatewayIntentBits, Collection, Events, REST, Routes, ActivityType
@@ -13,22 +13,13 @@ import { sendWelcome } from './lib/welcome.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Kiem tra env bat buoc
-const REQUIRED = [
-  'DISCORD_TOKEN',
-  'DISCORD_CLIENT_ID',
-  'DISCORD_GUILD_ID',
-  'GH_TOKEN',
-  'GH_OWNER',
-  'GH_REPO'
-];
+const REQUIRED = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID', 'GH_TOKEN', 'GH_OWNER', 'GH_REPO'];
 const missing = REQUIRED.filter(k => !process.env[k]);
 if (missing.length) {
   logger.err('Thieu env: ' + missing.join(', '));
   process.exit(1);
 }
 
-// Tao client
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -40,7 +31,6 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// Load commands
 const cmdPath = join(__dirname, 'commands');
 const cmdFiles = readdirSync(cmdPath).filter(f => f.endsWith('.js'));
 const slashData = [];
@@ -59,7 +49,6 @@ for (const file of cmdFiles) {
   }
 }
 
-// Deploy slash commands
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 try {
   logger.info('Deploy ' + slashData.length + ' slash commands...');
@@ -73,16 +62,16 @@ try {
   process.exit(1);
 }
 
-// Event: Ready
 client.once(Events.ClientReady, async (c) => {
   logger.ok('Bot online: ' + c.user.tag);
   logger.info('Guilds: ' + c.guilds.cache.size);
   logger.info('Commands: ' + c.commands.size);
 
-  // Rotating status
+  c.guilds.cache.forEach(g => logger.info('  Guild: ' + g.name + ' (' + g.id + ')'));
+
   const statuses = [
     { name: 'Zenova Shop', type: ActivityType.Playing },
-    { name: '/menu | Zenova', type: ActivityType.Listening },
+    { name: '/taomay | Zenova', type: ActivityType.Listening },
     { name: c.guilds.cache.size + ' servers', type: ActivityType.Watching },
     { name: 'May ao Cloud', type: ActivityType.Competing }
   ];
@@ -93,18 +82,14 @@ client.once(Events.ClientReady, async (c) => {
     c.user.setPresence({ activities: [statuses[idx]], status: 'online' });
   }, 30000);
 
-  // Log khoi dong
-  await logToChannel(c, 'success', 'Zenova Shop khoi dong',
+  await logToChannel(c, 'success', 'Zenova Shop v12 khoi dong',
     'Bot da online\n**' + c.commands.size + '** commands | **' + c.guilds.cache.size + '** servers');
 });
 
-// Event: Member join
 client.on(Events.GuildMemberAdd, async (member) => {
   try {
     const channelId = process.env.WELCOME_CHANNEL_ID;
-    if (channelId) {
-      await sendWelcome(member, channelId);
-    }
+    if (channelId) await sendWelcome(member, channelId);
     await logToChannel(client, 'info', 'Member moi',
       member.user.tag + ' vua tham gia', [
         { name: 'User', value: member.toString(), inline: true },
@@ -115,7 +100,6 @@ client.on(Events.GuildMemberAdd, async (member) => {
   }
 });
 
-// Event: Message (XP)
 client.on(Events.MessageCreate, (message) => {
   if (message.author.bot) return;
   if (!message.guild) return;
@@ -138,19 +122,22 @@ client.on(Events.MessageCreate, (message) => {
   }
 });
 
-// Event: Interactions
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    // Slash commands
+    const cmdId = interaction.customId || interaction.commandName || 'unknown';
+    logger.info('>>> INTERACTION: ' + interaction.type + ' | ' + interaction.user.tag + ' | ' + cmdId);
+
     if (interaction.isChatInputCommand()) {
       const cmd = client.commands.get(interaction.commandName);
-      if (!cmd) return;
+      if (!cmd) {
+        logger.warn('Command khong tim thay: ' + interaction.commandName);
+        return;
+      }
       logger.cmd(interaction.user.tag + ': /' + interaction.commandName);
       await cmd.execute(interaction);
       return;
     }
 
-    // Autocomplete
     if (interaction.isAutocomplete()) {
       const cmd = client.commands.get(interaction.commandName);
       if (cmd?.autocomplete) {
@@ -159,16 +146,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // Buttons / Selects / Modals
     if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
       const [prefix, ...rest] = interaction.customId.split(':');
+      logger.cmd(interaction.user.tag + ': [' + interaction.customId + '] prefix=' + prefix);
+
       const handler = client.commands.get(prefix);
-      if (!handler?.handleComponent) return;
-      logger.cmd(interaction.user.tag + ': [' + interaction.customId + ']');
+      if (!handler) {
+        logger.warn('Handler khong tim thay: ' + prefix);
+        return;
+      }
+      if (!handler.handleComponent) {
+        logger.warn('Handler khong co handleComponent: ' + prefix);
+        return;
+      }
+
       await handler.handleComponent(interaction, rest);
     }
   } catch (e) {
     logger.err('Interaction fail: ' + e.message);
+    logger.err('Stack: ' + (e.stack || ''));
     const msg = { content: 'Loi: `' + e.message + '`', ephemeral: true };
     try {
       if (interaction.replied || interaction.deferred) {
@@ -180,18 +176,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// Shutdown
-process.on('SIGINT', () => {
-  logger.warn('SIGINT - thoat');
-  client.destroy();
-  process.exit(0);
-});
-process.on('SIGTERM', () => {
-  logger.warn('SIGTERM - thoat');
-  client.destroy();
-  process.exit(0);
-});
+process.on('SIGINT', () => { logger.warn('SIGINT'); client.destroy(); process.exit(0); });
+process.on('SIGTERM', () => { logger.warn('SIGTERM'); client.destroy(); process.exit(0); });
 process.on('unhandledRejection', (e) => logger.err('Unhandled: ' + e));
+process.on('uncaughtException', (e) => logger.err('Uncaught: ' + e.message + '\n' + e.stack));
 
-// Login
 client.login(process.env.DISCORD_TOKEN);

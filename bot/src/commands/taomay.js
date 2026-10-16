@@ -1,4 +1,4 @@
-// ZENOVA SHOP - /taomay
+// ZENOVA SHOP - /taomay v14 ULTRA (progress bar + live update)
 import {
   SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
   ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle
@@ -8,6 +8,24 @@ import { logger } from '../lib/logger.js';
 import { isMember, isAdmin } from '../lib/security.js';
 import { COLORS } from '../ui/embeds.js';
 
+function progressBar(pct) {
+  const filled = Math.round(pct / 5);
+  const empty = 20 - filled;
+  return '`' + '▰'.repeat(filled) + '▱'.repeat(empty) + '` **' + Math.round(pct) + '%**';
+}
+
+function timelineStep(state) {
+  const s = state?.status || 'starting';
+  const ready = state?.ready === true;
+  return [
+    ready ? '**[1/5]** ' + String.fromCharCode(9989) + ' Khoi tao workflow' : '**[1/5]** ' + String.fromCharCode(128993) + ' Khoi tao workflow',
+    ready ? '**[2/5]** ' + String.fromCharCode(9989) + ' Cai dat Windows + Lite' : '**[2/5]** ' + String.fromCharCode(128993) + ' Cai dat Windows + Lite',
+    ready ? '**[3/5]** ' + String.fromCharCode(9989) + ' Cau hinh RDP + Firewall' : '**[3/5]** ' + String.fromCharCode(128993) + ' Cau hinh RDP + Firewall',
+    ready ? '**[4/5]** ' + String.fromCharCode(9989) + ' Ket noi Tailscale' : '**[4/5]** ' + String.fromCharCode(128993) + ' Ket noi Tailscale',
+    ready ? '**[5/5]** ' + String.fromCharCode(9989) + ' Tao User + Publish State' : '**[5/5]** ' + String.fromCharCode(128993) + ' Tao User + Publish State'
+  ].join('\n');
+}
+
 export default {
   data: new SlashCommandBuilder()
     .setName('taomay')
@@ -16,7 +34,11 @@ export default {
   async execute(interaction) {
     if (!isMember(interaction)) {
       return interaction.reply({
-        embeds: [{ color: COLORS.danger, title: 'Khong co quyen', description: 'Can role **AI-STV Member**.' }],
+        embeds: [{
+          color: COLORS.danger,
+          title: 'Khong co quyen',
+          description: 'Ban can role **AI-STV Member** de dung lenh nay.'
+        }],
         ephemeral: true
       });
     }
@@ -81,17 +103,17 @@ export default {
           '+-----------------------------------------+\n' +
           '```\n' +
           '**Ten may:** `' + machineName + '`\n' +
-          '**Thoi luong:** `6 gio` (mac dinh)\n' +
+          '**Thoi luong:** `6 gio`\n' +
           '**Do phan giai:** `1920x1080@60`\n\n' +
           'Chon phien ban Windows:'
         )
-        .setFooter({ text: 'Zenova Shop | Buoc 2/2' })
+        .setFooter({ text: 'Buoc 2/2' })
         .setTimestamp();
 
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('taomay:win:' + machineName + ':windows-2022').setLabel('Windows 2022').setEmoji('🪟').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('taomay:win:' + machineName + ':windows-2025').setLabel('Windows 2025').setEmoji('🪟').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('taomay:cancel').setLabel('Huy').setEmoji('❌').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId('taomay:win:' + machineName + ':windows-2022').setLabel('Windows 2022').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('taomay:win:' + machineName + ':windows-2025').setLabel('Windows 2025').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('taomay:cancel').setLabel('Huy').setStyle(ButtonStyle.Danger)
       );
 
       await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
@@ -109,35 +131,34 @@ export default {
     if (action === 'win') {
       const machineName = rest[1];
       const windows = rest[2];
+      const startTime = Date.now();
 
       await interaction.deferUpdate();
 
-      const creating = new EmbedBuilder()
-        .setTitle('DANG TAO MAY...')
+      const buildEmbed = (pct, status, attempts) => new EmbedBuilder()
+        .setTitle('DANG TAO MAY')
         .setColor(COLORS.warning)
         .setDescription(
           '```\n' +
           '+-----------------------------------------+\n' +
-          '|    ZENOVA SHOP  -  DANG XU LY            |\n' +
+          '|    ZENOVA SHOP  -  PROCESSING            |\n' +
           '+-----------------------------------------+\n' +
-          '```\n' +
-          '**Ten may:** `' + machineName + '`\n' +
-          '**Windows:** `' + windows + '`\n' +
-          '**Thoi luong:** `6 gio`\n\n' +
-          '⏳ Vui long doi 1-3 phut...\n\n' +
-          'Bot dang:\n' +
-          '1. Gui lenh tao may den GitHub\n' +
-          '2. Cho Windows khoi dong\n' +
-          '3. Lay thong tin ket noi (IP Tailscale)\n\n' +
-          '*Se thong bao qua tin nhan rieng khi xong*'
+          '```'
         )
-        .setFooter({ text: 'Zenova Shop' })
+        .addFields(
+          { name: 'Ten may', value: '`' + machineName + '`', inline: true },
+          { name: 'Windows', value: '`' + windows + '`', inline: true },
+          { name: 'Thoi gian', value: '`' + Math.floor((Date.now() - startTime) / 1000) + 's`', inline: true },
+          { name: 'Tien do', value: progressBar(pct), inline: false },
+          { name: 'Cac buoc', value: timelineStep({ status, ready: pct >= 100 }), inline: false },
+          { name: 'Trang thai', value: status || 'Dang xu ly...', inline: false }
+        )
+        .setFooter({ text: 'Bot se DM khi xong' })
         .setTimestamp();
 
-      await interaction.editReply({ embeds: [creating], components: [] });
+      await interaction.editReply({ embeds: [buildEmbed(5, 'Gui lenh den GitHub...')], components: [] });
 
       try {
-        // CHI GUI NHUNG INPUT WORKFLOW CO
         await dispatchCreate({
           machine_id: machineName,
           owner_discord_id: interaction.user.id,
@@ -148,16 +169,31 @@ export default {
           vdd_resolution: '1920x1080@60',
           auto_save_interval_min: '15'
         });
-        logger.ok('Workflow dispatched cho may: ' + machineName);
+        logger.ok('Da dispatch: ' + machineName);
       } catch (e) {
         logger.err('Dispatch fail: ' + e.message);
         return interaction.editReply({
-          embeds: [new EmbedBuilder().setColor(COLORS.danger).setTitle('Loi gui lenh').setDescription('`' + e.message + '`')]
+          embeds: [new EmbedBuilder().setColor(COLORS.danger).setTitle('Loi').setDescription('`' + e.message + '`')]
         });
       }
 
-      // Poll workflow trong background
-      waitForWorkflowCompletion(machineName, 300000, 15000).then(async (result) => {
+      // Progress updates moi 30s
+      let progressTimer = null;
+      let lastPct = 5;
+
+      progressTimer = setInterval(async () => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const pct = Math.min(95, 5 + (elapsed / 300) * 90);
+        lastPct = pct;
+        try {
+          await interaction.editReply({ embeds: [buildEmbed(pct, 'Dang setup Windows + Tailscale...')] });
+        } catch {}
+      }, 30000);
+
+      // Cho state.json
+      waitForWorkflowCompletion(machineName, 600000, 8000).then(async (result) => {
+        if (progressTimer) clearInterval(progressTimer);
+
         const user = interaction.user;
         const dmChannel = await user.createDM().catch(() => null);
 
@@ -168,12 +204,12 @@ export default {
           const endDate = new Date(startDate.getTime() + totalMin * 60000);
 
           const successEmbed = new EmbedBuilder()
-            .setTitle('TAO MAY THANH CONG!')
+            .setTitle('TAO MAY THANH CONG')
             .setColor(COLORS.success)
             .setDescription(
               '```\n' +
               '+-----------------------------------------+\n' +
-              '|    ZENOVA SHOP  -  SAN SANG KET NOI      |\n' +
+              '|    ZENOVA SHOP  -  SAN SANG              |\n' +
               '+-----------------------------------------+\n' +
               '```\n' +
               'May **' + machineName + '** da san sang!'
@@ -186,9 +222,10 @@ export default {
               { name: 'User', value: '`' + (m.user || 'runneradmin') + '`', inline: true },
               { name: 'Pass', value: '`' + (m.password || '(secret)') + '`', inline: true },
               { name: 'Ket thuc', value: '<t:' + Math.floor(endDate.getTime() / 1000) + ':R>', inline: true },
+              { name: 'Thoi gian tao', value: Math.round((Date.now() - startTime) / 1000) + 's', inline: true },
               { name: 'Cach ket noi', value: '1. Cai **Tailscale**\n2. Mo `mstsc` nhap `' + (m.tailscaleIp || '?') + ':3389`\n3. User: `' + (m.user || 'runneradmin') + '`\n4. Pass: `' + (m.password || '(secret)') + '`', inline: false }
             )
-            .setFooter({ text: 'Zenova Shop | ' + new Date().toLocaleString('vi-VN') })
+            .setFooter({ text: 'Zenova Shop v14 | ' + new Date().toLocaleString('vi-VN') })
             .setTimestamp();
 
           try { await interaction.editReply({ embeds: [successEmbed], components: [] }); } catch (e) {}
@@ -199,7 +236,7 @@ export default {
           const failEmbed = new EmbedBuilder()
             .setTitle('TAO MAY THAT BAI')
             .setColor(COLORS.danger)
-            .setDescription('Loi: `' + (result.error || 'Khong ro') + '`' + (result.runUrl ? '\n[Xem log](' + result.runUrl + ')' : ''))
+            .setDescription('Loi: `' + (result.error || 'Khong ro') + '`')
             .setTimestamp();
           try { await interaction.editReply({ embeds: [failEmbed], components: [] }); } catch (e) {}
           if (dmChannel) {
@@ -207,7 +244,8 @@ export default {
           }
         }
       }).catch(async (e) => {
-        logger.err('Wait workflow fail: ' + e.message);
+        if (progressTimer) clearInterval(progressTimer);
+        logger.err('Wait fail: ' + e.message);
         try {
           await interaction.editReply({
             embeds: [new EmbedBuilder().setColor(COLORS.danger).setTitle('Loi he thong').setDescription('`' + e.message + '`')]

@@ -1,14 +1,9 @@
-// ZENOVA SHOP - /help - Huong dan
-import {
-  SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle
-} from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { COLORS } from '../ui/embeds.js';
 import { isAdmin, isMember } from '../lib/security.js';
 
 export default {
-  data: new SlashCommandBuilder()
-    .setName('help')
-    .setDescription('Huong dan su dung Zenova Shop Bot'),
+  data: new SlashCommandBuilder().setName('help').setDescription('Huong dan su dung Zenova Shop Bot'),
 
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
@@ -17,7 +12,7 @@ export default {
     const member = isMember(interaction);
 
     const embed = new EmbedBuilder()
-      .setTitle('ZENOVA SHOP - HUONG DAN')
+      .setTitle('ZENOVA SHOP v13 - HUONG DAN')
       .setColor(COLORS.primary)
       .setThumbnail(interaction.client.user.displayAvatarURL())
       .setDescription(
@@ -25,89 +20,77 @@ export default {
         '+----------------------------------------------+\n' +
         '|          ZENOVA SHOP  -  HELP                |\n' +
         '+----------------------------------------------+\n' +
-        '```'
+        '```\n' +
+        '**Bot da tinh nang**: May ao, Moderation, Economy, Fun, XP'
       )
       .setTimestamp()
-      .setFooter({ text: 'Zenova Shop v9.0' });
+      .setFooter({ text: 'Zenova Shop v13.0 ULTIMATE' });
 
+    // MAY AO
     embed.addFields({
-      name: 'May ao (Member)',
+      name: '🖥️ May ao (Member)',
       value: member
-        ? [
-            '`/taomay` - Tao may moi',
-            '`/xoamay` - Xoa may cua ban',
-            '`/infomay` - Xem thong tin may'
-          ].join('\n')
+        ? '`/taomay` Tao may\n`/xoamay` Xoa may\n`/infomay` Xem thong tin may'
         : 'Ban can role **AI-STV Member**',
       inline: false
     });
 
-    embed.addFields({
-      name: 'Giai tri',
-      value: [
-        '`/fun` - Menu tro choi',
-        '`/dice` - Tung xuc xac',
-        '`/coinflip` - Tung xu',
-        '`/8ball` - Bong ma',
-        '`/avatar` - Xem avatar',
-        '`/poll` - Tao binh chon',
-        '`/meme` - Random meme',
-        '`/quote` - Random quote',
-        '`/top` - BXH XP'
-      ].join('\n'),
-      inline: false
-    });
-
-    embed.addFields({
-      name: 'Tien ich',
-      value: [
-        '`/ping` - Do tre bot',
-        '`/uptime` - Bot chay bao lau',
-        '`/botinfo` - Thong tin bot'
-      ].join('\n'),
-      inline: false
-    });
-
+    // MODERATION
     if (admin) {
       embed.addFields({
-        name: 'Lenh Admin',
+        name: '🛡️ Moderation (Admin)',
         value: [
-          '`/danhsach` - Toan bo may',
-          '`/stop` - Huy run',
-          '`/log` - Xem log',
-          '`/status` - Trang thai he thong',
-          '`/setlog` - Dat kenh log',
-          '`/setwelcome` - Dat kenh welcome',
-          '`/givexp` - Cong XP',
-          '`/resetxp` - Reset XP'
+          '`/warn` `/warnings` - Canh cao',
+          '`/kick` `/ban` - Kick/Ban',
+          '`/mute` `/unmute` - Timeout',
+          '`/purge` - Xoa tin nhan',
+          '`/slowmode` `/lock` - Quan ly kenh'
         ].join('\n'),
+        inline: false
+      });
+
+      embed.addFields({
+        name: '⚙️ Admin may ao',
+        value: '`/danhsach` `/stop` `/log` `/status` `/setlog` `/setwelcome` `/givexp` `/resetxp`',
         inline: false
       });
     }
 
+    // ECONOMY
     embed.addFields({
-      name: 'Luat choi',
+      name: '💰 Economy',
       value: [
-        '- **1 nguoi 1 may**',
-        '- **Thoi gian mac dinh: 6 gio**',
-        '- **Windows:** 2022 hoac 2025',
-        '- **Chat +1 XP/phut**',
-        '- **Member** chi xoa may cua minh'
+        '`/daily` `/work` - Kiem tien',
+        '`/balance` `/pay` - Vi & Chuyen tien',
+        '`/gamble` - Danh bac',
+        '`/leaderboard` - BXH giau co'
       ].join('\n'),
       inline: false
     });
 
+    // FUN
+    embed.addFields({
+      name: '🎮 Fun',
+      value: '`/fun` `/dice` `/coinflip` `/8ball` `/avatar` `/poll` `/meme` `/quote`',
+      inline: false
+    });
+
+    // UTILITY
+    embed.addFields({
+      name: '🔧 Utility',
+      value: '`/ping` `/uptime` `/botinfo` `/serverinfo` `/rank` `/top`',
+      inline: false
+    });
+
+    embed.addFields({
+      name: '📏 Luat choi',
+      value: '- **1 nguoi 1 may**\n- **Thoi gian: 6h** (mac dinh)\n- **Windows:** 2022/2025\n- **+1 XP/phut chat**',
+      inline: false
+    });
+
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel('GitHub')
-        .setEmoji('📖')
-        .setStyle(ButtonStyle.Link)
-        .setURL('https://github.com/' + process.env.GH_OWNER + '/' + process.env.GH_REPO),
-      new ButtonBuilder()
-        .setLabel('Actions')
-        .setEmoji('⚡')
-        .setStyle(ButtonStyle.Link)
-        .setURL('https://github.com/' + process.env.GH_OWNER + '/' + process.env.GH_REPO + '/actions')
+      new ButtonBuilder().setLabel('GitHub').setStyle(ButtonStyle.Link).setURL(`https://github.com/${process.env.GH_OWNER}/${process.env.GH_REPO}`),
+      new ButtonBuilder().setLabel('Actions').setStyle(ButtonStyle.Link).setURL(`https://github.com/${process.env.GH_OWNER}/${process.env.GH_REPO}/actions`)
     );
 
     await interaction.editReply({ embeds: [embed], components: [row] });
