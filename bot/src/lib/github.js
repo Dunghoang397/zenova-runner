@@ -1,5 +1,4 @@
-// ZENOVA SHOP - GitHub API v14.1
-// FIX: KHONG CHO workflow completed - chi cho state.json (tranh Keepalive)
+// ZENOVA SHOP - GitHub API v16 (poll 3s)
 import { Octokit } from '@octokit/rest';
 import { logger } from './logger.js';
 
@@ -12,7 +11,7 @@ const cfg = {
 
 export const octokit = new Octokit({
   auth: process.env.GH_TOKEN,
-  userAgent: 'zenova-shop-bot/14.1'
+  userAgent: 'zenova-shop-bot/16.0'
 });
 
 const tag = (id) => `zenova-storage-${id}`;
@@ -24,7 +23,7 @@ async function ghApi(path, options = {}) {
     'Accept': 'application/vnd.github+json',
     'Authorization': 'Bearer ' + process.env.GH_TOKEN,
     'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'zenova-shop-bot/14.1',
+    'User-Agent': 'zenova-shop-bot/16.0',
     ...(options.headers || {})
   };
   const res = await fetch(url, { ...options, headers });
@@ -36,7 +35,6 @@ async function ghApi(path, options = {}) {
   return await res.json();
 }
 
-// ═══ DISPATCH ═══
 export async function dispatchCreate(inputs) {
   if (!/^[a-z0-9\-]+$/.test(inputs.machine_id)) {
     throw new Error('Ten may chi duoc chua a-z, 0-9, dau gach');
@@ -53,7 +51,6 @@ export async function dispatchCreate(inputs) {
   logger.ok('Da dispatch: ' + inputs.machine_id);
 }
 
-// ═══ LIST MACHINES ═══
 export async function listMachines() {
   const releases = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases?per_page=100');
   return releases
@@ -68,7 +65,6 @@ export async function listMachines() {
     }));
 }
 
-// ═══ GET STATE.JSON ═══
 export async function getStateJson(machineId) {
   try {
     const rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
@@ -89,7 +85,6 @@ export async function getManifest(machineId) {
   return getStateJson(machineId);
 }
 
-// ═══ USER MACHINE ═══
 export async function getUserMachine(discordUserId) {
   const machines = await listMachines();
   for (const m of machines.slice(0, 30)) {
@@ -107,7 +102,6 @@ export async function isMachineOwner(discordUserId, machineId) {
   return state.ownerDiscordId === discordUserId;
 }
 
-// ═══ LIST RUNS ═══
 export async function listActiveRuns() {
   const data = await ghApi(
     '/repos/' + cfg.owner + '/' + cfg.repo + '/actions/workflows/' + cfg.workflow + '/runs?per_page=50'
@@ -139,16 +133,12 @@ export async function listRecentRuns(limit = 20) {
   }));
 }
 
-// ═══════════════════════════════════════════════════════
-// WAIT STATE.JSON — KHONG CHO WORKFLOW COMPLETED
-// Keepalive co the chay 6h nhung state.json xuat hien som (3-5 phut)
-// ═══════════════════════════════════════════════════════
-export async function waitForWorkflowCompletion(machineId, maxWaitMs = 900000, intervalMs = 6000, onProgress = null) {
+// ═══ POLL 3S FAST ═══
+export async function waitForWorkflowCompletion(machineId, maxWaitMs = 900000, intervalMs = 3000, onProgress = null) {
   const startTime = Date.now();
-  logger.info('Bat dau cho state.json cho may: ' + machineId);
+  logger.info('Cho state.json (poll 3s): ' + machineId);
 
-  // Doi 6s cho workflow bat dau
-  await new Promise(r => setTimeout(r, 6000));
+  await new Promise(r => setTimeout(r, 4000));
 
   let attempt = 0;
   const maxAttempts = Math.floor(maxWaitMs / intervalMs);
@@ -156,85 +146,59 @@ export async function waitForWorkflowCompletion(machineId, maxWaitMs = 900000, i
 
   while (Date.now() - startTime < maxWaitMs) {
     attempt++;
-
     try {
       const state = await getStateJson(machineId);
-
-      // Callback progress
       if (onProgress) {
         try { await onProgress({ attempt, maxAttempts, state, elapsed: Date.now() - startTime }); } catch {}
       }
 
-      // SUCCESS: state ready + co IP
       if (state && state.ready === true && state.tailscaleIp && state.tailscaleIp !== '?') {
-        logger.ok('LAY DUOC STATE.JSON (attempt ' + attempt + ', ' + Math.round((Date.now() - startTime) / 1000) + 's)');
+        logger.ok('READY (attempt ' + attempt + ', ' + Math.round((Date.now() - startTime) / 1000) + 's)');
         logger.info('IP: ' + state.tailscaleIp);
         return { success: true, manifest: state, attempts: attempt, elapsed: Date.now() - startTime };
       }
 
-      // Log moi 10 attempts (~60s)
-      if (attempt - lastLogAt >= 10) {
-        if (state?.status === 'starting') {
-          logger.info('Workflow dang setup (' + attempt + '/' + maxAttempts + ', ' + Math.round((Date.now() - startTime) / 1000) + 's)');
-        } else if (state?.ready === true) {
-          logger.info('State ready nhung thieu IP (' + attempt + '/' + maxAttempts + ')');
-        } else {
-          logger.info('Chua co state.json (' + attempt + '/' + maxAttempts + ', ' + Math.round((Date.now() - startTime) / 1000) + 's)');
-        }
+      if (attempt - lastLogAt >= 20) {
+        const s = state?.status || 'unknown';
+        logger.info('Poll ' + attempt + '/' + maxAttempts + ' | status:' + s + ' | ' + Math.round((Date.now() - startTime) / 1000) + 's');
         lastLogAt = attempt;
       }
     } catch (e) {
-      logger.dbg('Check state fail: ' + e.message);
+      logger.dbg('Check fail: ' + e.message);
     }
-
     await new Promise(r => setTimeout(r, intervalMs));
   }
 
-  logger.warn('Timeout sau ' + (maxWaitMs / 1000) + 's');
-  return {
-    success: false,
-    error: 'Timeout ' + (maxWaitMs / 1000) + 's. Kiem tra GitHub Actions.',
-    lastState: null
-  };
+  return { success: false, error: 'Timeout ' + (maxWaitMs / 1000) + 's' };
 }
 
-// ═══ DELETE MACHINE ═══
 export async function deleteMachine(machineId, requesterId, isAdmin = false) {
   if (!isAdmin) {
     const owned = await isMachineOwner(requesterId, machineId);
     if (!owned) throw new Error('Ban khong phai chu cua may nay');
   }
-
   try {
     const runs = await listRecentRuns(20);
     const active = runs.filter(r => ['in_progress', 'queued'].includes(r.status));
     for (const r of active) {
-      try {
-        await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + r.id + '/cancel', { method: 'POST' });
-      } catch {}
+      try { await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + r.id + '/cancel', { method: 'POST' }); } catch {}
     }
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 3000));
   } catch (e) {}
-
   try {
     const rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
     await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/' + rel.id, { method: 'DELETE' });
   } catch (e) {}
-
   try {
     await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/git/refs/heads/' + branch(machineId), { method: 'DELETE' });
   } catch (e) {}
-
-  logger.ok('Da xoa may: ' + machineId);
+  logger.ok('Da xoa: ' + machineId);
 }
 
-// ═══ CANCEL RUN ═══
 export async function cancelRun(runId) {
   await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + runId + '/cancel', { method: 'POST' });
-  logger.ok('Cancelled run ' + runId);
 }
 
-// ═══ GET LOG ═══
 export async function getRunLogTail(runId, lines = 80) {
   try {
     const jobs = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + runId + '/jobs');

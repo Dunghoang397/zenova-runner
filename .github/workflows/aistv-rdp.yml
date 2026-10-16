@@ -1,4 +1,4 @@
-# ZENOVA RUNNER v15 - Khong Keepalive loop, dung sleep dai
+# ZENOVA RUNNER v16 - Fast publish + Parallel setup + Keep session
 name: Zenova Runner
 
 on:
@@ -52,6 +52,16 @@ on:
         required: false
         default: '15'
         type: string
+      auto_restart:
+        description: 'Tu dong khoi dong phien moi'
+        required: false
+        default: true
+        type: boolean
+      keep_session:
+        description: 'Giu session khi disconnect RDP'
+        required: false
+        default: true
+        type: boolean
       choco_packages:
         description: 'App cai them'
         required: false
@@ -80,8 +90,10 @@ jobs:
       AUTO_SAVE_INTERVAL_MIN: ${{ inputs.auto_save_interval_min }}
       WINDOWS_MODE: ${{ inputs.windows_mode }}
       PKGS: ${{ inputs.choco_packages }}
+      KEEP_SESSION: ${{ inputs.keep_session }}
 
     steps:
+      # ═══ SETUP + PUBLISH STARTING ═══
       - name: Resolve ID
         shell: pwsh
         env:
@@ -115,6 +127,7 @@ jobs:
           $build = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuild
           "OS_BUILD=$build" >> "$env:GITHUB_ENV"
 
+          # Publish state ngay lap tuc (de bot biet may dang tao)
           $null = gh release view "$env:RELEASE_TAG" --repo "$env:GH_REPO" 2>&1
           if (($LASTEXITCODE) -ne 0) {
               $dummy = "$env:RUNNER_TEMP\init.txt"
@@ -123,7 +136,6 @@ jobs:
           }
           $global:LASTEXITCODE = 0
 
-          # Publish state "starting" ngay
           $quickState = [ordered]@{
               machineId = "$cleanId"
               ownerDiscordId = "$env:OWNER_DISCORD_ID"
@@ -138,6 +150,7 @@ jobs:
           $global:LASTEXITCODE = 0
           exit 0
 
+      # ═══ SONG SONG: TAILSCALE + LITE + RDP ═══
       - name: Install Tailscale (early)
         env:
           TS_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
@@ -152,7 +165,7 @@ jobs:
                       Invoke-WebRequest 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' -OutFile "$msi" -UseBasicParsing
                       if ((Test-Path "$msi") -and ((Get-Item "$msi").Length -gt 5MB)) { break }
                   } catch {}
-                  Start-Sleep 3
+                  Start-Sleep 2
               }
               if (Test-Path "$msi") { Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait }
           }
@@ -160,38 +173,22 @@ jobs:
 
           Set-Service 'Tailscale' -StartupType Automatic -EA SilentlyContinue
           Start-Service 'Tailscale' -EA SilentlyContinue
-          Start-Sleep 4
+          Start-Sleep 3
 
           $tsHost = "zenova-$($env:MACHINE_ID)"
           & "$ts" up "--authkey=$env:TS_KEY" "--hostname=$tsHost" --accept-routes --accept-dns --reset --unattended 2>&1 | Out-Null
-          if (($LASTEXITCODE) -ne 0) { Start-Sleep 3; & "$ts" up "--authkey=$env:TS_KEY" "--hostname=$tsHost" --accept-routes --accept-dns --reset 2>&1 | Out-Null }
+          if (($LASTEXITCODE) -ne 0) { Start-Sleep 2; & "$ts" up "--authkey=$env:TS_KEY" "--hostname=$tsHost" --accept-routes --accept-dns --reset 2>&1 | Out-Null }
 
           $ip = $null
-          1..20 | ForEach-Object { if (-not $ip) { $o = (& "$ts" ip -4 2>&1 | Out-String).Trim(); if ("$o" -match '^\d+\.\d+\.\d+\.\d+$') { $ip = "$o" } else { Start-Sleep 2 } } }
+          1..15 | ForEach-Object { if (-not $ip) { $o = (& "$ts" ip -4 2>&1 | Out-String).Trim(); if ("$o" -match '^\d+\.\d+\.\d+\.\d+$') { $ip = "$o" } else { Start-Sleep 2 } } }
           if (-not $ip) { exit 1 }
 
           "TAILSCALE_IP=$ip" >> "$env:GITHUB_ENV"
           "TAILSCALE_HOST=$tsHost" >> "$env:GITHUB_ENV"
-          Write-Host "Tailscale IP: $ip" -ForegroundColor Green
+          Write-Host "Tailscale: $ip" -ForegroundColor Green
           exit 0
 
-      - name: Lite Windows
-        if: ${{ inputs.windows_mode == 'lite' }}
-        shell: pwsh
-        run: |
-          foreach ($svc in @('DiagTrack','WSearch','SysMain','WerSvc','XblAuthManager','XblGameSave','XboxNetApiSvc','XboxGipSvc','Spooler','Fax','MapsBroker','RetailDemo','PcaSvc','TabletInputService')) {
-              try { Stop-Service $svc -Force -EA SilentlyContinue; Set-Service $svc -StartupType Disabled -EA SilentlyContinue } catch {}
-          }
-          Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' 0 -Type DWord -Force -EA SilentlyContinue
-          Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting' 2 -Type DWord -Force -EA SilentlyContinue
-
-          $bloat = @('Microsoft.3DBuilder','Microsoft.BingNews','Microsoft.BingWeather','Microsoft.GetHelp','Microsoft.Getstarted','Microsoft.MicrosoftOfficeHub','Microsoft.MicrosoftSolitaireCollection','Microsoft.People','Microsoft.SkypeApp','Microsoft.WindowsAlarms','Microsoft.WindowsFeedbackHub','Microsoft.WindowsMaps','Microsoft.ZuneMusic','Microsoft.ZuneVideo','Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.YourPhone','Microsoft.MixedReality.Portal','Microsoft.OneConnect','Microsoft.Print3D','Microsoft.Wallet')
-          foreach ($a in $bloat) {
-              Get-AppxPackage -Name "$a" -AllUsers -EA SilentlyContinue | Remove-AppxPackage -AllUsers -EA SilentlyContinue
-          }
-          Write-Host "Lite done" -ForegroundColor Green
-          exit 0
-
+      # ═══ RDP + KEEP SESSION ═══
       - name: Configure RDP
         shell: pwsh
         run: |
@@ -201,9 +198,20 @@ jobs:
           Set-ItemProperty "$p" 'SecurityLayer' 0 -Force
           Set-ItemProperty "$p" 'fDisableAudioCapture' 0 -Type DWord -Force
           Set-ItemProperty "$p" 'fDisableCam' 0 -Type DWord -Force
+          Set-ItemProperty "$p" 'fPromptForPassword' 0 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty "$p" 'fSingleSessionPerUser' 0 -Type DWord -Force -EA SilentlyContinue
           Restart-Service TermService -Force -EA SilentlyContinue
           Start-Sleep 2
 
+          # Chong ngat session
+          $tsPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+          New-Item -Path "$tsPol" -Force | Out-Null
+          Set-ItemProperty "$tsPol" 'fResetBroken' 0 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty "$tsPol" 'MaxIdleTime' 0 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty "$tsPol" 'MaxDisconnectionTime' 0 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty "$tsPol" 'fLogoffWhenNodc' 0 -Type DWord -Force -EA SilentlyContinue
+
+          # Firewall
           Remove-NetFirewallRule -DisplayName 'Zenova-RDP' -EA SilentlyContinue
           Remove-NetFirewallRule -DisplayName 'Zenova-TS' -EA SilentlyContinue
           New-NetFirewallRule -DisplayName 'Zenova-RDP' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -Profile Any | Out-Null
@@ -211,10 +219,12 @@ jobs:
           Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block -AllowInboundRules True
 
           Set-Service TermService -StartupType Automatic -EA SilentlyContinue
+          Set-Service UmRdpService -StartupType Automatic -EA SilentlyContinue
           Start-Service TermService -EA SilentlyContinue
-          Write-Host "RDP OK" -ForegroundColor Green
+          Start-Service UmRdpService -EA SilentlyContinue
           exit 0
 
+      # ═══ USER ═══
       - name: Setup User
         shell: pwsh
         env:
@@ -229,7 +239,6 @@ jobs:
               $source = 'random'
           }
           Write-Host "::add-mask::$matKhau"
-
           Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'DisableCAD' 1 -Type DWord -Force -EA SilentlyContinue
           Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'LocalAccountTokenFilterPolicy' 1 -Type DWord -Force -EA SilentlyContinue
           & net accounts /minpwlen:0 /maxpwage:unlimited /minpwage:0 /uniquepw:0 *> $null
@@ -238,30 +247,30 @@ jobs:
           & net localgroup Administrators "$user" /add *> $null
           & net localgroup "Remote Desktop Users" "$user" /add *> $null
           $global:LASTEXITCODE = 0
-
           $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
           Set-ItemProperty $wl 'AutoAdminLogon' '1' -Type String -Force -EA SilentlyContinue
           Set-ItemProperty $wl 'DefaultUserName' "$user" -Type String -Force -EA SilentlyContinue
           Set-ItemProperty $wl 'DefaultPassword' "$matKhau" -Type String -Force -EA SilentlyContinue
-
           "RDP_PASS=$matKhau" >> "$env:GITHUB_ENV"
           "RDP_PASS_SOURCE=$source" >> "$env:GITHUB_ENV"
-          Write-Host "User ready" -ForegroundColor Green
           exit 0
 
-      - name: Install Apps
-        if: ${{ inputs.choco_packages != '' }}
+      # ═══ LITE ═══
+      - name: Lite Windows
+        if: ${{ inputs.windows_mode == 'lite' }}
         shell: pwsh
         run: |
-          if ("$env:PKGS" -notmatch '^[A-Za-z0-9 ._\-]*$') { exit 1 }
-          $pkgs = @("$env:PKGS" -split '\s+' | Where-Object { $_ })
-          foreach ($p in $pkgs) {
-              choco install "$p" -y --no-progress --limit-output --ignore-checksums
-              $global:LASTEXITCODE = 0
+          foreach ($svc in @('DiagTrack','WSearch','SysMain','WerSvc','XblAuthManager','XblGameSave','XboxNetApiSvc','XboxGipSvc','Spooler','Fax','MapsBroker','RetailDemo','PcaSvc','TabletInputService')) {
+              try { Stop-Service $svc -Force -EA SilentlyContinue; Set-Service $svc -StartupType Disabled -EA SilentlyContinue } catch {}
+          }
+          Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' 0 -Type DWord -Force -EA SilentlyContinue
+          $bloat = @('Microsoft.3DBuilder','Microsoft.BingNews','Microsoft.BingWeather','Microsoft.GetHelp','Microsoft.Getstarted','Microsoft.MicrosoftOfficeHub','Microsoft.MicrosoftSolitaireCollection','Microsoft.People','Microsoft.SkypeApp','Microsoft.WindowsAlarms','Microsoft.WindowsFeedbackHub','Microsoft.WindowsMaps','Microsoft.ZuneMusic','Microsoft.ZuneVideo','Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.YourPhone')
+          foreach ($a in $bloat) {
+              Get-AppxPackage -Name "$a" -AllUsers -EA SilentlyContinue | Remove-AppxPackage -AllUsers -EA SilentlyContinue
           }
           exit 0
 
-      # ═══ PUBLISH STATE READY ═══
+      # ═══ PUBLISH READY (FAST) ═══
       - name: Publish Ready State
         shell: pwsh
         env:
@@ -281,76 +290,163 @@ jobs:
               durationMinutes = [int]"$env:TOTAL_MINUTES"
               status = "ready"
               ready = $true
+              keepSession = "$env:KEEP_SESSION"
               readyUtc = (Get-Date).ToUniversalTime().ToString('o')
           }
-
           $tempDir = "$env:RUNNER_TEMP\state-ready"
           New-Item -ItemType Directory -Force -Path "$tempDir" | Out-Null
           $state | ConvertTo-Json -Depth 5 | Set-Content "$tempDir\state.json" -Encoding UTF8
-
           foreach ($t in 1..3) {
               gh release upload "$env:RELEASE_TAG" "$tempDir\state.json" --repo "$env:GH_REPO" --clobber 2>&1 | Out-Null
               if (($LASTEXITCODE) -eq 0) { break }
-              Start-Sleep 3
+              Start-Sleep 2
           }
-
-          Write-Host ""
-          Write-Host "==============================================================" -ForegroundColor Cyan
-          Write-Host "  ZENOVA v15 - SAN SANG KET NOI" -ForegroundColor Cyan
-          Write-Host "==============================================================" -ForegroundColor Cyan
-          Write-Host "  May       : $env:MACHINE_ID" -ForegroundColor Cyan
-          Write-Host "  Windows   : ${{ inputs.windows_image }} (${{ inputs.windows_mode }})" -ForegroundColor White
-          Write-Host "  IP        : $env:TAILSCALE_IP" -ForegroundColor Yellow
-          Write-Host "  RDP       : $env:TAILSCALE_IP:3389" -ForegroundColor White
-          Write-Host "  User      : $env:RDP_USER" -ForegroundColor Green
-          Write-Host "  Thoi luong: $env:DISPLAY_TIME" -ForegroundColor White
-          Write-Host "==============================================================" -ForegroundColor Cyan
-          Write-Host "::notice title=Ready::$env:MACHINE_ID | $env:TAILSCALE_IP:3389"
+          Write-Host "READY - $env:MACHINE_ID | $env:TAILSCALE_IP" -ForegroundColor Green
           exit 0
 
-      # ═══════════════════════════════════════════════════════
-      # HOLD SESSION - thay Keepalive loop bang sleep dai
-      # Khong ton CPU, workflow van in_progress
-      # ═══════════════════════════════════════════════════════
+      # ═══ APPS (sau ready de bot nhan nhanh) ═══
+      - name: Install Apps
+        if: ${{ inputs.choco_packages != '' }}
+        shell: pwsh
+        run: |
+          if ("$env:PKGS" -notmatch '^[A-Za-z0-9 ._\-]*$') { exit 1 }
+          $pkgs = @("$env:PKGS" -split '\s+' | Where-Object { $_ })
+          foreach ($p in $pkgs) {
+              choco install "$p" -y --no-progress --limit-output --ignore-checksums
+              $global:LASTEXITCODE = 0
+          }
+          exit 0
+
+      # ═══ SAVE ENGINE ═══
+      - name: Setup Save Engine
+        shell: pwsh
+        run: |
+          $scriptLines = @(
+              'param([string]$Reason = "session-end", [string]$Mode = "keep")',
+              '$ErrorActionPreference = "Continue"',
+              'Write-Host "=== SAVE [$Reason] ===" -ForegroundColor Cyan',
+              '$user = "$env:RDP_USER"',
+              '$profPath = "$env:PROFILE_PATH"',
+              '$relTag = "$env:RELEASE_TAG"',
+              '$repo = "$env:GH_REPO"',
+              '$appsToClose = @("chrome","msedge","brave","firefox","discord","Telegram","steam")',
+              'Get-Process -Name $appsToClose -EA SilentlyContinue | ForEach-Object { $null = $_.CloseMainWindow() }',
+              'Start-Sleep 3',
+              'Get-Process -Name $appsToClose -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue',
+              '$regDir = "$env:RUNNER_TEMP\save-registry"',
+              'New-Item -ItemType Directory -Force -Path "$regDir" | Out-Null',
+              'reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" "$regDir\Uninstall.reg" /y *> $null',
+              'reg export "HKCU\Software" "$regDir\HKCU-Software.reg" /y *> $null',
+              'reg export "HKCU\Environment" "$regDir\User-Env.reg" /y *> $null',
+              'reg export "HKCU\Control Panel\Desktop" "$regDir\User-Desktop.reg" /y *> $null',
+              '$uploadDir = "$env:RUNNER_TEMP\upload-pack"',
+              'Remove-Item "$uploadDir" -Recurse -Force -EA SilentlyContinue',
+              'New-Item -ItemType Directory -Force -Path "$uploadDir" | Out-Null',
+              'Copy-Item "$regDir\*" "$uploadDir\" -Force -EA SilentlyContinue',
+              '$state = [ordered]@{',
+              '    machineId = "$env:MACHINE_ID"',
+              '    ownerDiscordId = "$env:OWNER_DISCORD_ID"',
+              '    user = "$user"',
+              '    password = if ("$env:RDP_PASS_SOURCE" -ne "secret") { "$env:RDP_PASS" } else { "(secret)" }',
+              '    tailscaleIp = "$env:TAILSCALE_IP"',
+              '    osBuild = "$env:OS_BUILD"',
+              '    windowsImage = "${{ inputs.windows_image }}"',
+              '    saveReason = "$Reason"',
+              '    savedUtc = (Get-Date).ToUniversalTime().ToString("o")',
+              '    ready = $false',
+              '    status = if ($Mode -eq "restart") { "restarting" } else { "saved" }',
+              '}',
+              '$state | ConvertTo-Json -Depth 5 | Set-Content "$uploadDir\state.json" -Encoding UTF8',
+              'Get-ChildItem "$uploadDir" -File | ForEach-Object {',
+              '    for ($t=1; $t -le 3; $t++) {',
+              '        gh release upload "$relTag" "$($_.FullName)" --repo "$repo" --clobber 2>&1 | Out-Null',
+              '        if (($LASTEXITCODE) -eq 0) { break }',
+              '        Start-Sleep 3',
+              '    }',
+              '}',
+              'Write-Host "=== SAVE DONE ===" -ForegroundColor Green',
+              'exit 0'
+          )
+          $savePath = "$env:RUNNER_TEMP\save-data.ps1"
+          Set-Content "$savePath" -Value ($scriptLines -join "`r`n") -Encoding UTF8
+          exit 0
+
+      # ═══ HOLD ═══
       - name: Hold Session
         id: hold
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTO_RESTART: ${{ inputs.auto_restart }}
+          INPUT_DURATION: ${{ inputs.duration }}
+          INPUT_WINDOWS: ${{ inputs.windows_image }}
+          INPUT_MODE: ${{ inputs.windows_mode }}
+          INPUT_RES: ${{ inputs.vdd_resolution }}
         run: |
           $totalSec = ([int]"$env:TOTAL_MINUTES") * 60
           $startTime = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
           $endTime = $startTime + $totalSec
+          $saveScript = "$env:RUNNER_TEMP\save-data.ps1"
+          $saveIntervalSec = ([int]"$env:AUTO_SAVE_INTERVAL_MIN") * 60
+          if ($saveIntervalSec -le 0) { $saveIntervalSec = 999999 }
 
-          Write-Host "Giu phien trong $env:TOTAL_MINUTES phut ($($totalSec)s)..." -ForegroundColor Yellow
-          Write-Host "Bat dau: $(Get-Date -Format 'HH:mm:ss')" -ForegroundColor Cyan
-          Write-Host "Ket thuc: $((Get-Date).AddSeconds($totalSec).ToString('HH:mm:ss'))" -ForegroundColor Cyan
-          Write-Host ""
-
-          $checkInterval = 60  # Kiem tra moi 60s
-          $lastCheck = 0
+          $lastSave = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          $lastRecover = 0
 
           while ($true) {
               $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-              if ($now -ge $endTime) {
-                  Write-Host "Het thoi gian!" -ForegroundColor Yellow
-                  break
+              $remainSec = $endTime - $now
+              if ($remainSec -le 0) { break }
+
+              if ($now - $lastSave -ge $saveIntervalSec) {
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] AUTO-SAVE" -ForegroundColor Cyan
+                  & "$saveScript" -Reason "auto-save" -Mode "keep"
+                  $lastSave = $now
               }
 
-              # Kiem tra service moi 60s
-              if ($now - $lastCheck -ge $checkInterval) {
+              if (($env:KEEP_SESSION -eq "true") -and ($now - $lastRecover -ge 30)) {
+                  try {
+                      $lines = @(query session 2>$null)
+                      foreach ($line in $lines) {
+                          if ("$line" -match "^\s*>?\s*$([regex]::Escape("$env:RDP_USER"))\s+" -and "$line" -match "\s+Disc\s+") {
+                              $parts = (($line -replace '^>','').Trim()) -split '\s+'
+                              $sid = $parts[1..($parts.Count-1)] | Where-Object { $_ -match '^\d+$' } | Select-Object -First 1
+                              if ($sid) {
+                                  Write-Host "Recovery session $sid" -ForegroundColor Yellow
+                                  & tscon.exe "$sid" /dest:console 2>&1 | Out-Null
+                              }
+                          }
+                      }
+                  } catch {}
+                  $lastRecover = $now
+              }
+
+              if ($now % 60 -lt 5) {
                   $svc = Get-Service 'TermService' -EA SilentlyContinue
-                  if ($svc.Status -ne 'Running') {
-                      Write-Host "TermService dung, restart..." -ForegroundColor Red
-                      Start-Service 'TermService' -EA SilentlyContinue
-                  }
-
-                  $remain = [math]::Floor(($endTime - $now) / 60)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $env:MACHINE_ID | RDP:$($svc.Status) | Con:${remain}m" -ForegroundColor Blue
-                  $lastCheck = $now
+                  if ($svc.Status -ne 'Running') { Start-Service 'TermService' -EA SilentlyContinue }
+                  $remainMin = [math]::Floor($remainSec / 60)
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $env:MACHINE_ID | RDP:$($svc.Status) | Con:${remainMin}m" -ForegroundColor Blue
               }
 
-              # Sleep 60s - khong ton CPU, van giu workflow in_progress
-              Start-Sleep -Seconds 60
+              Start-Sleep 20
           }
 
-          Write-Host "Ket thuc giu phien." -ForegroundColor Green
+          & "$saveScript" -Reason "session-end" -Mode "restart"
+
+          if ("$env:AUTO_RESTART" -eq "true") {
+              $wf = [System.IO.Path]::GetFileName(("$env:GITHUB_WORKFLOW_REF" -split '@')[0])
+              gh workflow run "$wf" --ref "$env:GITHUB_REF_NAME" `
+                  -f "machine_id=$env:MACHINE_ID" `
+                  -f "owner_discord_id=$env:OWNER_DISCORD_ID" `
+                  -f "duration=$env:INPUT_DURATION" `
+                  -f "windows_image=$env:INPUT_WINDOWS" `
+                  -f "windows_mode=$env:INPUT_MODE" `
+                  -f "vdd_resolution=$env:INPUT_RES" `
+                  -f "drive_letter=$env:MOUNT_LETTER" `
+                  -f "vhd_size_gb=$env:VHD_SIZE_GB" `
+                  -f "auto_save_interval_min=$env:AUTO_SAVE_INTERVAL_MIN" `
+                  -f "auto_restart=true" `
+                  -f "keep_session=$env:KEEP_SESSION"
+              Write-Host "Triggered new session" -ForegroundColor Green
+          }
           exit 0
