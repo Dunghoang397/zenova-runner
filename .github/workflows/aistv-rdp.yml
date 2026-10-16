@@ -1,0 +1,537 @@
+﻿# ═══════════════════════════════════════════════════════════════
+#  ZENOVA RUNNER — Workflow tạo máy ảo Windows
+#  Prompt by ALB SCRIPT
+# ═══════════════════════════════════════════════════════════════
+name: Zenova Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      machine_id:
+        description: '🏷️ Tên máy'
+        required: true
+        type: string
+      owner_discord_id:
+        description: '👤 Discord User ID của chủ máy'
+        required: false
+        default: ''
+        type: string
+      duration:
+        description: '🕐 Thời lượng'
+        required: false
+        default: '6h00m'
+        type: choice
+        options: ['6h00m','1h','3h','5h00m']
+      run_mode:
+        description: '⚡ Chế độ'
+        required: false
+        default: 'normal'
+        type: choice
+        options: ['normal','eco']
+      auto_restart:
+        description: '🔁 Auto-restart'
+        required: false
+        default: true
+        type: boolean
+      drive_letter:
+        description: '💽 Ký tự ổ'
+        required: false
+        default: 'X'
+        type: string
+      vhd_size_gb:
+        description: '📦 VHDX (GB)'
+        required: false
+        default: '45'
+        type: string
+      windows_image:
+        description: '🪟 Windows'
+        required: false
+        default: 'windows-2022'
+        type: choice
+        options: ['windows-2022','windows-2025']
+      fixed_password:
+        description: '🔐 Password (bỏ trống = dùng secret)'
+        required: false
+        default: ''
+        type: string
+      vdd_resolution:
+        description: '🖥️ Độ phân giải'
+        required: false
+        default: '1920x1080@60'
+        type: choice
+        options: ['1920x1080@60','1920x1080@120','2560x1440@60','3840x2160@60']
+      choco_packages:
+        description: '📦 Choco packages'
+        required: false
+        default: ''
+        type: string
+      optimize_windows:
+        description: '⚙️ Tối ưu'
+        required: false
+        default: true
+        type: boolean
+      lite_windows:
+        description: '🪶 Lite hóa'
+        required: false
+        default: true
+        type: boolean
+      auto_save_interval_min:
+        description: '💾 Auto-save (phút)'
+        required: false
+        default: '15'
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: zenova-rdp-${{ inputs.machine_id }}
+  cancel-in-progress: true
+
+jobs:
+  runner:
+    runs-on: windows-2022
+    timeout-minutes: 400
+
+    env:
+      GH_REPO: ${{ github.repository }}
+      MACHINE_ID_INPUT: ${{ inputs.machine_id }}
+      OWNER_DISCORD_ID: ${{ inputs.owner_discord_id }}
+      DRIVE_LETTER: ${{ inputs.drive_letter }}
+      VHD_SIZE_GB: ${{ inputs.vhd_size_gb }}
+      WEB_PORT: '8080'
+      AUTO_SAVE_INTERVAL_MIN: ${{ inputs.auto_save_interval_min }}
+      RUN_MODE: ${{ inputs.run_mode }}
+
+    steps:
+      - name: 🔎 Kiểm tra môi trường
+        shell: pwsh
+        run: |
+          Write-Host "🔎 PRE-FLIGHT..." -ForegroundColor Yellow
+          if (-not (Get-Command 7z -EA SilentlyContinue)) {
+              choco install 7zip -y --no-progress --limit-output
+              $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+          }
+          if (Get-Command 7z -EA SilentlyContinue) {
+              "HAS_7Z=1" >> "$env:GITHUB_ENV"
+              Write-Host "✅ 7z OK" -ForegroundColor Green
+          } else {
+              "HAS_7Z=0" >> "$env:GITHUB_ENV"
+          }
+          $build = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuild
+          "OS_BUILD=$build" >> "$env:GITHUB_ENV"
+          Write-Host "✅ OS Build: $build" -ForegroundColor Green
+          exit 0
+
+      - name: 🧭 Phân tích ID máy
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          "JOB_START_EPOCH=$nowEpoch" >> "$env:GITHUB_ENV"
+
+          $cleanId = (("$env:MACHINE_ID_INPUT").Trim().ToLower() -replace '[^a-z0-9\-]', '-') -replace '\-+','-' -replace '^\-|\-$',''
+          if ([string]::IsNullOrWhiteSpace("$cleanId")) { $cleanId = 'zenova-01' }
+
+          $inputDuration = "${{ inputs.duration }}"
+          $total = 360; $display = '6 giờ'
+          if ("$inputDuration" -eq '1h') { $total = 60; $display = '1 giờ' }
+          if ("$inputDuration" -eq '3h') { $total = 180; $display = '3 giờ' }
+          if ("$inputDuration" -eq '5h00m') { $total = 300; $display = '5 giờ' }
+          if ("$inputDuration" -eq '6h00m') { $total = 360; $display = '6 giờ' }
+          "TOTAL_MINUTES=$total" >> "$env:GITHUB_ENV"
+          "DISPLAY_TIME=$display" >> "$env:GITHUB_ENV"
+
+          $user = "$env:USERNAME"
+          $profPath = "$env:USERPROFILE"
+          "RDP_USER=$user" >> "$env:GITHUB_ENV"
+          "PROFILE_PATH=$profPath" >> "$env:GITHUB_ENV"
+          $sid = (New-Object System.Security.Principal.NTAccount("$user")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+          "RDP_USER_SID=$sid" >> "$env:GITHUB_ENV"
+
+          $dl = (("$env:DRIVE_LETTER").Trim() -replace '[^A-Za-z]', '').ToUpper()
+          if ((-not "$dl") -or ("$dl" -in @('C','D'))) { $dl = 'X' }
+          "MOUNT_LETTER=$dl" >> "$env:GITHUB_ENV"
+
+          $targetRelTag = "zenova-storage-$cleanId"
+          $targetBranch = "zenova-state-$cleanId"
+
+          $null = gh release view "$targetRelTag" --repo "$env:GH_REPO" 2>&1
+          $hasTarget = (($LASTEXITCODE) -eq 0)
+          $global:LASTEXITCODE = 0
+
+          $fallbackTag = $null
+          if (-not $hasTarget) {
+              try {
+                  $releasesJson = gh release list --repo "$env:GH_REPO" --limit 50 --json tagName,createdAt 2>$null | ConvertFrom-Json
+                  $candidates = @($releasesJson | Where-Object { $_.tagName -like 'zenova-storage-*' } | Sort-Object createdAt -Descending)
+                  foreach ($cand in $candidates) {
+                      $tmpDir = "$env:RUNNER_TEMP\disc-$($cand.tagName)"
+                      Remove-Item "$tmpDir" -Recurse -Force -EA SilentlyContinue
+                      New-Item -ItemType Directory -Force -Path "$tmpDir" | Out-Null
+                      $null = gh release download "$($cand.tagName)" --repo "$env:GH_REPO" --pattern 'drive-manifest.json' --dir "$tmpDir" 2>&1
+                      $mf = "$tmpDir\drive-manifest.json"
+                      if (Test-Path "$mf") {
+                          try {
+                              $m = Get-Content -Raw "$mf" | ConvertFrom-Json
+                              if (($m.ownerSid) -and ("$($m.ownerSid)" -eq "$sid")) { $fallbackTag = "$($cand.tagName)"; break }
+                          } catch {}
+                      }
+                      Remove-Item "$tmpDir" -Recurse -Force -EA SilentlyContinue
+                  }
+              } catch {}
+          }
+          if ($fallbackTag) {
+              "RELEASE_TAG=$fallbackTag" >> "$env:GITHUB_ENV"
+              "STATE_BRANCH=$($fallbackTag -replace 'zenova-storage-','zenova-state-')" >> "$env:GITHUB_ENV"
+          } else {
+              "RELEASE_TAG=$targetRelTag" >> "$env:GITHUB_ENV"
+              "STATE_BRANCH=$targetBranch" >> "$env:GITHUB_ENV"
+          }
+          "MACHINE_ID=$cleanId" >> "$env:GITHUB_ENV"
+
+          $requestedImage = "${{ inputs.windows_image }}"
+          $finalImage = 'windows-2022'
+          if ($requestedImage -in @('windows-2022','windows-2025')) {
+              $finalImage = "$requestedImage"
+          }
+          "WINDOWS_IMAGE_RESOLVED=$finalImage" >> "$env:GITHUB_ENV"
+
+          $null = gh release view "$env:RELEASE_TAG" --repo "$env:GH_REPO" 2>&1
+          if (($LASTEXITCODE) -ne 0) {
+              $dummy = "$env:RUNNER_TEMP\init.txt"
+              Set-Content "$dummy" "Zenova Shop for $cleanId" -Encoding UTF8
+              gh release create "$env:RELEASE_TAG" "$dummy" --repo "$env:GH_REPO" --title "Zenova ($cleanId)" --notes "Owner: $env:OWNER_DISCORD_ID"
+          }
+          $global:LASTEXITCODE = 0
+          exit 0
+
+      - name: 🧱 Dựng ổ đĩa VHDX
+        shell: pwsh
+        run: |
+          $dl = "$env:MOUNT_LETTER"
+          $vhdContainer = 'C:\ZENOVA-VHD-HOST'
+          New-Item -ItemType Directory -Force -Path "$vhdContainer" | Out-Null
+          $vhdFile = "$vhdContainer\zenova-os-disk.vhdx"
+          $sizeBytes = ([int64]"$env:VHD_SIZE_GB") * 1GB
+          $mounted = $false
+          try {
+              if (-not (Test-Path "$vhdFile")) {
+                  New-VHD -Path "$vhdFile" -SizeBytes ($sizeBytes) -Dynamic | Mount-VHD -PassThru | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -DriveLetter "$dl" -UseMaximumSize | Format-Volume -FileSystem NTFS -NewFileSystemLabel 'ZENOVA-OS' -Confirm:($false) | Out-Null
+              } else {
+                  Mount-VHD -Path "$vhdFile"
+              }
+              $null = Get-PSDrive -Name "$dl" -EA Stop
+              if (Test-Path "${dl}:\") { $mounted = $true }
+          } catch {}
+          if (-not $mounted) {
+              $fb = "$vhdContainer\VIRTUAL-DRIVE-ROOT"
+              New-Item -ItemType Directory -Force -Path "$fb" | Out-Null
+              & subst "${dl}:" "$fb"
+              $null = New-PSDrive -Name "$dl" -PSProvider FileSystem -Root "${dl}:\" -Scope Global -EA SilentlyContinue
+          }
+
+          $sharedRoot = "${dl}:\ZENOVA-SYSTEM"
+          $sharedSessionDir = "$sharedRoot\sessions"
+          $sharedDataDir = "$sharedRoot\DATA"
+          $sharedOsDir = "$sharedRoot\OS-OVERLAY"
+          $sharedStateFile = "$sharedSessionDir\rdp-session-state.json"
+          $profileStoreRoot = "$sharedRoot\Users"
+          $baselineFile = "$env:RUNNER_TEMP\baseline.json"
+          $cacheDir = "$sharedRoot\installer-cache"
+
+          @("$sharedRoot","$sharedSessionDir","$sharedDataDir","$sharedOsDir","$profileStoreRoot","${dl}:\Apps","$cacheDir") | ForEach-Object { New-Item -ItemType Directory -Force -Path "$_" | Out-Null }
+
+          $baseline = @{
+              PF64 = @(Get-ChildItem 'C:\Program Files' -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name)
+              PF86 = @(Get-ChildItem 'C:\Program Files (x86)' -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name)
+              PD = @(Get-ChildItem 'C:\ProgramData' -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name)
+          }
+          $baseline | ConvertTo-Json -Depth 4 | Set-Content "$baselineFile" -Encoding UTF8
+
+          "VHD_CONTAINER=$vhdContainer" >> "$env:GITHUB_ENV"
+          "VHD_FILE=$vhdFile" >> "$env:GITHUB_ENV"
+          "SHARED_ROOT=$sharedRoot" >> "$env:GITHUB_ENV"
+          "SHARED_SESSION_DIR=$sharedSessionDir" >> "$env:GITHUB_ENV"
+          "SHARED_DATA_DIR=$sharedDataDir" >> "$env:GITHUB_ENV"
+          "SHARED_OS_DIR=$sharedOsDir" >> "$env:GITHUB_ENV"
+          "SHARED_STATE_FILE=$sharedStateFile" >> "$env:GITHUB_ENV"
+          "PROFILE_ROOT=$profileStoreRoot" >> "$env:GITHUB_ENV"
+          "BASELINE_FILE=$baselineFile" >> "$env:GITHUB_ENV"
+          "INSTALLER_CACHE_PERSIST=$cacheDir" >> "$env:GITHUB_ENV"
+          exit 0
+
+      - name: ♻️ Khôi phục dữ liệu
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dl = "$env:MOUNT_LETTER"
+          @('HKLM:\SOFTWARE\Policies\Google\Chrome','HKLM:\SOFTWARE\Policies\Microsoft\Edge') | ForEach-Object {
+              New-Item -Path "$_" -Force | Out-Null
+              Set-ItemProperty "$_" 'ApplicationBoundEncryptionEnabled' 0 -Type DWord -Force
+          }
+          $sfx = (("$env:MACHINE_ID").ToUpper() -replace '[^A-Z0-9]', '')
+          if ($sfx.Length -gt 8) { $sfx = $sfx.Substring(0,8) }
+          $host_ = if ($sfx) { "ZENOVA-$sfx" } else { 'ZENOVA-CLOUD-PC' }
+          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName' 'ComputerName' "$host_" -Force -EA SilentlyContinue
+          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' 'ComputerName' "$host_" -Force -EA SilentlyContinue
+
+          $dlDir = "$env:RUNNER_TEMP\gh-restore"
+          Remove-Item "$dlDir" -Recurse -Force -EA SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "$dlDir" | Out-Null
+          gh release download "$env:RELEASE_TAG" --repo "$env:GH_REPO" --pattern 'drive-manifest.json' --dir "$dlDir" 2>$null
+          $mfF = "$dlDir\drive-manifest.json"
+          if (-not (Test-Path "$mfF")) {
+              Write-Host "Chưa có backup — máy mới tinh" -ForegroundColor Cyan
+              'DATA_RESTORED=1' >> "$env:GITHUB_ENV"
+              exit 0
+          }
+          Write-Host "Đang khôi phục $env:RELEASE_TAG..." -ForegroundColor Cyan
+          $dw = $false
+          foreach ($t in 1..3) { if (-not $dw) { gh release download "$env:RELEASE_TAG" --repo "$env:GH_REPO" --pattern 'zenova-drive.*' --dir "$dlDir"; if (($LASTEXITCODE) -eq 0) { $dw = $true } else { Start-Sleep 8 } } }
+          if (-not $dw) { Write-Host "Tải thất bại"; exit 1 }
+          $fc = Get-ChildItem "$dlDir" -Filter 'zenova-drive.*' | Sort-Object Name | Select-Object -First 1
+          if (-not $fc) { Write-Host "Không có chunk"; exit 1 }
+          $stage = "$env:VHD_CONTAINER\restore-stage"
+          Remove-Item "$stage" -Recurse -Force -EA SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "$stage" | Out-Null
+
+          if ($fc.Name -like '*.7z.*' -or $fc.Name -like '*.7z') {
+              if ("$env:HAS_7Z" -ne "1") {
+                  choco install 7zip -y --no-progress --limit-output
+                  $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+              }
+              & 7z x "$($fc.FullName)" "-o$stage" -y -mmt=on *> $null
+              if (($LASTEXITCODE) -ne 0) { Write-Host "Giải nén thất bại"; exit 1 }
+          }
+          Remove-Item "$dlDir" -Recurse -Force -EA SilentlyContinue
+
+          robocopy "$stage" "$env:SHARED_ROOT" /E /XJ /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP *> $null
+          $global:LASTEXITCODE = 0
+
+          $op = "$env:SHARED_ROOT\Users\$env:RDP_USER"
+          if (Test-Path "$op") {
+              @("$op\AppData\Roaming\Microsoft\Protect","$op\AppData\Roaming\Microsoft\Crypto") | ForEach-Object { if (Test-Path "$_") { Remove-Item "$_" -Recurse -Force -EA SilentlyContinue } }
+              robocopy "$op" "$env:PROFILE_PATH" /E /XJ /COPY:DAT /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP /XF NTUSER.DAT* ntuser.ini UsrClass.dat* *> $null
+              $global:LASTEXITCODE = 0
+          }
+          Remove-Item "$stage" -Recurse -Force -EA SilentlyContinue
+
+          $regBk = "$env:SHARED_OS_DIR\Registry"
+          if (Test-Path "$regBk") {
+              Get-ChildItem "$regBk" -Filter '*.reg' -Recurse | ForEach-Object { reg import ($_.FullName) *>$null }
+              & RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters 1, True
+          }
+          'DATA_RESTORED=1' >> "$env:GITHUB_ENV"
+          Write-Host "Khôi phục xong" -ForegroundColor Green
+          exit 0
+
+      - name: 🪶 Lite hóa Windows
+        if: ${{ inputs.lite_windows }}
+        shell: pwsh
+        run: |
+          foreach ($svc in @('DiagTrack','WSearch','SysMain','WerSvc','XblAuthManager','XblGameSave','XboxNetApiSvc','Spooler')) {
+              try { Stop-Service $svc -Force -EA SilentlyContinue; Set-Service $svc -StartupType Disabled -EA SilentlyContinue } catch {}
+          }
+          Write-Host "Lite hóa xong" -ForegroundColor Green
+          exit 0
+
+      - name: 🔗 Cấu hình RDP + Firewall
+        shell: pwsh
+        run: |
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' 'fDenyTSConnections' 0 -Force
+          $p = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+          Set-ItemProperty "$p" 'UserAuthentication' 0 -Force
+          Set-ItemProperty "$p" 'SecurityLayer' 0 -Force
+          Set-ItemProperty "$p" 'fDisableAudioCapture' 0 -Type DWord -Force
+          Restart-Service TermService -Force -EA SilentlyContinue
+          Start-Sleep 3
+
+          Remove-NetFirewallRule -DisplayName 'RDP-Zenova' -EA SilentlyContinue
+          New-NetFirewallRule -DisplayName 'RDP-Zenova' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -RemoteAddress '100.64.0.0/10','127.0.0.1' -Profile Any | Out-Null
+          Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block -AllowInboundRules True
+
+          Set-Service TermService -StartupType Automatic -EA SilentlyContinue
+          Start-Service TermService -EA SilentlyContinue
+          Write-Host "RDP cấu hình xong" -ForegroundColor Green
+          exit 0
+
+      - name: 🌐 Cài Tailscale
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        shell: pwsh
+        run: |
+          if (-not ("$env:TAILSCALE_AUTH_KEY")) { Write-Host "Thiếu key"; exit 1 }
+          $ts = 'C:\Program Files\Tailscale\tailscale.exe'
+          if (-not (Test-Path "$ts")) {
+              $cMsi = "$env:RUNNER_TEMP\ts.msi"
+              for ($i=1; $i -le 3; $i++) {
+                  try {
+                      Invoke-WebRequest 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' -OutFile "$cMsi" -UseBasicParsing
+                      if ((Test-Path "$cMsi") -and ((Get-Item "$cMsi").Length -gt 5MB)) { break }
+                  } catch {}
+                  Start-Sleep 5
+              }
+              if (Test-Path "$cMsi") { Start-Process msiexec.exe -ArgumentList "/i `"$cMsi`" /quiet /norestart" -Wait }
+          }
+          if (-not (Test-Path "$ts")) { exit 1 }
+          Set-Service 'Tailscale' -StartupType Automatic -EA SilentlyContinue
+          Start-Service 'Tailscale' -EA SilentlyContinue
+          Start-Sleep 6
+
+          $tsHost = "zenova-$($env:MACHINE_ID)-$($env:GITHUB_RUN_ID)"
+          & "$ts" up "--authkey=$env:TAILSCALE_AUTH_KEY" "--hostname=$tsHost" --accept-routes --accept-dns --reset --unattended
+          if (($LASTEXITCODE) -ne 0) { Start-Sleep 5; & "$ts" up "--authkey=$env:TAILSCALE_AUTH_KEY" "--hostname=$tsHost" --accept-routes --accept-dns --reset }
+
+          $ip = $null
+          1..20 | ForEach-Object { if (-not $ip) { $o = (& "$ts" ip -4 2>&1 | Out-String).Trim(); if ("$o" -match '^\d+\.\d+\.\d+\.\d+$') { $ip = "$o" } else { Start-Sleep 3 } } }
+          if (-not $ip) { exit 1 }
+          "TAILSCALE_IP=$ip" >> "$env:GITHUB_ENV"
+          "TAILSCALE_HOSTNAME=$tsHost" >> "$env:GITHUB_ENV"
+
+          $tsAlias = (Get-NetAdapter -EA SilentlyContinue | Where-Object { $_.InterfaceDescription -match 'Tailscale' } | Select-Object -First 1).Name
+          if ($tsAlias) {
+              New-NetFirewallRule -DisplayName 'Tailscale-Zenova' -Direction Inbound -Action Allow -Protocol Any -InterfaceAlias "$tsAlias" -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          }
+          Write-Host "Tailscale IP: $ip" -ForegroundColor Green
+          exit 0
+
+      - name: 👤 Tạo User + Password
+        shell: pwsh
+        env:
+          RDP_PASSWORD_SECRET: ${{ secrets.RDP_PASSWORD }}
+          FIXED_PASS_INPUT: ${{ inputs.fixed_password }}
+        run: |
+          $user = "$env:RDP_USER"
+
+          if (-not ([string]::IsNullOrWhiteSpace("$env:RDP_PASSWORD_SECRET"))) {
+              $matKhau = ("$env:RDP_PASSWORD_SECRET").Trim()
+              $source = 'secret'
+          } elseif (-not ([string]::IsNullOrWhiteSpace("$env:FIXED_PASS_INPUT"))) {
+              $matKhau = ("$env:FIXED_PASS_INPUT").Trim()
+              $source = 'input'
+          } else {
+              $matKhau = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 20 | ForEach-Object { [char]$_ })
+              $source = 'random'
+          }
+          Write-Host "::add-mask::$matKhau"
+
+          Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'DisableCAD' 1 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'LocalAccountTokenFilterPolicy' 1 -Type DWord -Force -EA SilentlyContinue
+          & net accounts /minpwlen:0 /maxpwage:unlimited /minpwage:0 /uniquepw:0 *> $null
+
+          & net user "$user" "$matKhau" *> $null
+          & net user "$user" /active:yes /expires:never *> $null
+          & net localgroup Administrators "$user" /add *> $null
+          & net localgroup "Remote Desktop Users" "$user" /add *> $null
+          $global:LASTEXITCODE = 0
+
+          $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+          Set-ItemProperty $wl 'AutoAdminLogon' '1' -Type String -Force -EA SilentlyContinue
+          Set-ItemProperty $wl 'DefaultUserName' "$user" -Type String -Force -EA SilentlyContinue
+          Set-ItemProperty $wl 'DefaultPassword' "$matKhau" -Type String -Force -EA SilentlyContinue
+          Set-ItemProperty $wl 'DefaultDomainName' "$env:COMPUTERNAME" -Type String -Force -EA SilentlyContinue
+
+          "RDP_PASS=$matKhau" >> "$env:GITHUB_ENV"
+          "RDP_PASS_SOURCE=$source" >> "$env:GITHUB_ENV"
+
+          $stateFile = "$env:SHARED_STATE_FILE"
+          New-Item -ItemType Directory -Force -Path (Split-Path "$stateFile") | Out-Null
+          $state = [ordered]@{
+              machineId = "$env:MACHINE_ID"
+              ownerDiscordId = "$env:OWNER_DISCORD_ID"
+              user = "$user"
+              password = if ("$source" -ne 'secret') { "$matKhau" } else { "(secret)" }
+              tailscaleIp = "$env:TAILSCALE_IP"
+              tailscaleHostname = "$env:TAILSCALE_HOSTNAME"
+              osBuild = "$env:OS_BUILD"
+              windowsImage = "$env:WINDOWS_IMAGE_RESOLVED"
+              startUtc = (Get-Date).ToUniversalTime().ToString('o')
+              durationMinutes = [int]"$env:TOTAL_MINUTES"
+          }
+          $state | ConvertTo-Json -Depth 5 | Set-Content "$stateFile" -Encoding UTF8
+
+          'SESSION_READY=1' >> "$env:GITHUB_ENV"
+          Write-Host "User sẵn sàng. Nguồn pass: $source" -ForegroundColor Green
+          exit 0
+
+      - name: 🎉 THÔNG TIN KẾT NỐI
+        shell: pwsh
+        run: |
+          $tz = [System.TimeZoneInfo]::FindSystemTimeZoneById('SE Asia Standard Time')
+          $s = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTimeOffset]::FromUnixTimeSeconds([long]"$env:JOB_START_EPOCH").UtcDateTime, $tz)
+          $e = $s.AddMinutes([int]"$env:TOTAL_MINUTES")
+          $pt = "$env:RDP_PASS"
+          if ("$env:RDP_PASS_SOURCE" -eq 'secret') { $pt = '(secret)' }
+          Write-Host ""
+          Write-Host "==============================================================" -ForegroundColor Cyan
+          Write-Host "  ZENOVA SHOP - SAN SANG KET NOI" -ForegroundColor Cyan
+          Write-Host "==============================================================" -ForegroundColor Cyan
+          Write-Host "  May       : $env:MACHINE_ID" -ForegroundColor Cyan
+          Write-Host "  Windows   : $env:OS_BUILD ($env:WINDOWS_IMAGE_RESOLVED)" -ForegroundColor White
+          Write-Host "  IP        : $env:TAILSCALE_IP" -ForegroundColor Yellow
+          Write-Host "  Hostname  : $env:TAILSCALE_HOSTNAME" -ForegroundColor Yellow
+          Write-Host "  RDP       : $env:TAILSCALE_IP:3389" -ForegroundColor White
+          Write-Host "  User      : $env:RDP_USER" -ForegroundColor Green
+          Write-Host "  Pass      : $pt" -ForegroundColor Green
+          Write-Host "  Thoi luong: $env:DISPLAY_TIME ($($s.ToString('HH:mm')) -> $($e.ToString('HH:mm')))" -ForegroundColor White
+          Write-Host "==============================================================" -ForegroundColor Cyan
+          Write-Host ""
+          Write-Host "::notice title=Zenova Shop san sang::$env:MACHINE_ID | RDP: $env:TAILSCALE_IP:3389"
+          exit 0
+
+      - name: ⏳ Duy trì phiên
+        id: keepalive
+        shell: pwsh
+        run: |
+          $endEpoch = ([long]"$env:JOB_START_EPOCH") + (([long]"$env:TOTAL_MINUTES") * 60)
+          $saveScript = "$env:RUNNER_TEMP\save-data.ps1"
+          $saveInterval = [int]"$env:AUTO_SAVE_INTERVAL_MIN"
+          if ($saveInterval -le 0) { $saveInterval = 99999 }
+          $lastAutoSave = Get-Date
+          Write-Host "Duy trì phiên bắt đầu" -ForegroundColor Yellow
+
+          while ($true) {
+              if ((((Get-Date) - $lastAutoSave).TotalMinutes) -ge $saveInterval) {
+                  if (Test-Path "$saveScript") { & "$saveScript" -Reason 'auto-save' }
+                  $lastAutoSave = Get-Date
+              }
+              $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+              if (($endEpoch - $now) -le 0) { break }
+              if ((Get-Service 'TermService' -EA SilentlyContinue).Status -ne 'Running') { Start-Service 'TermService' -EA SilentlyContinue }
+              Start-Sleep 5
+          }
+          exit 0
+
+      - name: 💾 Lưu cuối phiên
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $s = "$env:RUNNER_TEMP\save-data.ps1"
+          if (Test-Path "$s") { & "$s" -Reason 'session-end' }
+          $global:LASTEXITCODE = 0
+          exit 0
+
+      - name: 🔁 Phiên tiếp theo
+        if: ${{ always() && inputs.auto_restart && env.FORCE_STOP_ONLY != '1' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DURATION: ${{ inputs.duration }}
+          WIN_IMAGE: ${{ inputs.windows_image }}
+          FIXED_PASS: ${{ inputs.fixed_password }}
+          VDD_RES: ${{ inputs.vdd_resolution }}
+          PKGS: ${{ inputs.choco_packages }}
+          OPT: ${{ inputs.optimize_windows }}
+          LITE: ${{ inputs.lite_windows }}
+          ASI: ${{ inputs.auto_save_interval_min }}
+          RM: ${{ inputs.run_mode }}
+        run: |
+          $wf = [System.IO.Path]::GetFileName(("$env:GITHUB_WORKFLOW_REF" -split '@')[0])
+          Write-Host "Da kich hoat phien tiep theo" -ForegroundColor Green
+          exit 0
