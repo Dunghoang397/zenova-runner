@@ -23,8 +23,10 @@ export default {
     ),
 
   async execute(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     if (!isAdmin(interaction)) {
-      return interaction.reply({
+      return interaction.editReply({
         embeds: [{ color: 0xef4444, title: 'Chi Admin', description: 'Can role **AI-STV Admin**.' }],
         ephemeral: true
       });
@@ -34,7 +36,7 @@ export default {
 
     if (!channel) {
       setWelcomeChannel(null);
-      return interaction.reply({ content: 'Da **tat** welcome channel.', ephemeral: true });
+      return interaction.editReply({ content: 'Da **tat** welcome channel.', ephemeral: true });
     }
 
     setWelcomeChannel(channel.id);
@@ -45,6 +47,6 @@ export default {
       .setDescription(`Member moi se duoc chao o ${channel}`)
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.editReply({ embeds: [embed], ephemeral: true });
   }
 };

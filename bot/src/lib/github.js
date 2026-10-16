@@ -1,5 +1,4 @@
 // ZENOVA SHOP - GitHub API Wrapper
-// Tao/xoa may qua GitHub Actions
 import { Octokit } from '@octokit/rest';
 import { logger } from './logger.js';
 
@@ -12,17 +11,18 @@ const cfg = {
 
 export const octokit = new Octokit({
   auth: process.env.GH_TOKEN,
-  userAgent: 'zenova-shop-bot/8.0'
+  userAgent: 'zenova-shop-bot/9.0'
 });
 
 const tag = (id) => `zenova-storage-${id}`;
 const branch = (id) => `zenova-state-${id}`;
 
+// ─── Dispatch workflow ───
 export async function dispatchCreate(inputs) {
   if (!/^[a-z0-9\-]+$/.test(inputs.machine_id)) {
     throw new Error('Ten may chi duoc chua a-z, 0-9, dau gach');
   }
-  logger.cmd(`Dispatch tao may: ${inputs.machine_id} | owner: ${inputs.owner_discord_id}`);
+  logger.cmd('Dispatch tao may: ' + inputs.machine_id);
   await octokit.actions.createWorkflowDispatch({
     owner: cfg.owner,
     repo: cfg.repo,
@@ -30,9 +30,10 @@ export async function dispatchCreate(inputs) {
     ref: cfg.branch,
     inputs
   });
-  logger.ok(`Da dispatch: ${inputs.machine_id}`);
+  logger.ok('Da dispatch: ' + inputs.machine_id);
 }
 
+// ─── List machines ───
 export async function listMachines() {
   const { data: releases } = await octokit.repos.listReleases({
     owner: cfg.owner,
@@ -53,6 +54,7 @@ export async function listMachines() {
     }));
 }
 
+// ─── Get manifest ───
 export async function getManifest(machineId) {
   try {
     const { data: rel } = await octokit.repos.getReleaseByTag({
@@ -63,16 +65,17 @@ export async function getManifest(machineId) {
     const mf = rel.assets.find(a => a.name === 'drive-manifest.json');
     if (!mf) return null;
     const res = await fetch(mf.browser_download_url, {
-      headers: { Authorization: `Bearer ${process.env.GH_TOKEN}` }
+      headers: { Authorization: 'Bearer ' + process.env.GH_TOKEN }
     });
     if (!res.ok) return null;
     return await res.json();
   } catch (e) {
-    logger.dbg(`getManifest fail: ${e.message}`);
+    logger.dbg('getManifest fail: ' + e.message);
     return null;
   }
 }
 
+// ─── Get user's machine ───
 export async function getUserMachine(discordUserId) {
   const machines = await listMachines();
   for (const m of machines.slice(0, 30)) {
@@ -84,12 +87,14 @@ export async function getUserMachine(discordUserId) {
   return null;
 }
 
+// ─── Check owner ───
 export async function isMachineOwner(discordUserId, machineId) {
   const manifest = await getManifest(machineId);
   if (!manifest) return false;
   return manifest.ownerDiscordId === discordUserId;
 }
 
+// ─── List active runs ───
 export async function listActiveRuns() {
   const { data } = await octokit.actions.listWorkflowRuns({
     owner: cfg.owner,
@@ -108,6 +113,7 @@ export async function listActiveRuns() {
     }));
 }
 
+// ─── List recent runs ───
 export async function listRecentRuns(limit = 15) {
   const { data } = await octokit.actions.listWorkflowRuns({
     owner: cfg.owner,
@@ -125,15 +131,84 @@ export async function listRecentRuns(limit = 15) {
   }));
 }
 
-export async function cancelRun(runId) {
-  await octokit.actions.cancelWorkflowRun({
-    owner: cfg.owner,
-    repo: cfg.repo,
-    run_id: runId
-  });
-  logger.ok(`Da cancel run ${runId}`);
+// ─── Wait for workflow complete + get info ───
+export async function waitForWorkflowCompletion(machineId, maxWaitMs = 300000, intervalMs = 15000) {
+  const startTime = Date.now();
+  const initialRuns = await listRecentRuns(5);
+  const initialRunId = initialRuns[0]?.id;
+
+  logger.info('Cho workflow bat dau (run cu: ' + initialRunId + ')...');
+
+  let newRun = null;
+
+  // Cho run moi xuat hien (toi da 60 giay)
+  for (let i = 0; i < 6; i++) {
+    await new Promise(r => setTimeout(r, 10000));
+    const runs = await listRecentRuns(5);
+    if (runs[0] && runs[0].id !== initialRunId) {
+      newRun = runs[0];
+      logger.info('Workflow moi bat dau: run #' + newRun.number);
+      break;
+    }
+  }
+
+  if (!newRun) {
+    logger.warn('Khong tim thay run moi');
+    return { success: false, error: 'Workflow khong bat dau' };
+  }
+
+  // Cho run hoan thanh
+  while (Date.now() - startTime < maxWaitMs) {
+    const runs = await listRecentRuns(5);
+    const currentRun = runs.find(r => r.id === newRun.id);
+
+    if (!currentRun) {
+      await new Promise(r => setTimeout(r, intervalMs));
+      continue;
+    }
+
+    logger.info('Run #' + currentRun.number + ' status: ' + currentRun.status + ' / ' + (currentRun.conclusion || '...'));
+
+    if (currentRun.status === 'completed') {
+      if (currentRun.conclusion === 'success') {
+        // Đợi thêm 10s cho state file được ghi
+        await new Promise(r => setTimeout(r, 10000));
+
+        // Lấy manifest
+        const manifest = await getManifest(machineId);
+
+        if (manifest) {
+          return {
+            success: true,
+            manifest,
+            runUrl: currentRun.url,
+            runNumber: currentRun.number
+          };
+        } else {
+          return {
+            success: true,
+            manifest: null,
+            runUrl: currentRun.url,
+            runNumber: currentRun.number
+          };
+        }
+      } else {
+        return {
+          success: false,
+          error: 'Workflow ' + currentRun.conclusion,
+          runUrl: currentRun.url,
+          runNumber: currentRun.number
+        };
+      }
+    }
+
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+
+  return { success: false, error: 'Timeout cho workflow' };
 }
 
+// ─── Delete machine + trigger workflow cleanup ───
 export async function deleteMachine(machineId, requesterId, isAdmin = false) {
   if (!isAdmin) {
     const owned = await isMachineOwner(requesterId, machineId);
@@ -141,6 +216,29 @@ export async function deleteMachine(machineId, requesterId, isAdmin = false) {
       throw new Error('Ban khong phai chu cua may nay');
     }
   }
+
+  // Buoc 1: Trigger workflow cancel + save
+  try {
+    const runs = await listActiveRuns();
+    // Tim run cua may nay (khong co cach map truc tiep, cancel tat ca)
+    for (const r of runs) {
+      try {
+        await octokit.actions.cancelWorkflowRun({
+          owner: cfg.owner,
+          repo: cfg.repo,
+          run_id: r.id
+        });
+        logger.info('Cancelled run ' + r.number);
+      } catch {}
+    }
+
+    // Doi 10s cho save cuoi
+    await new Promise(r => setTimeout(r, 10000));
+  } catch (e) {
+    logger.dbg('Cancel runs fail: ' + e.message);
+  }
+
+  // Buoc 2: Xoa release
   try {
     const { data: rel } = await octokit.repos.getReleaseByTag({
       owner: cfg.owner,
@@ -152,21 +250,37 @@ export async function deleteMachine(machineId, requesterId, isAdmin = false) {
       repo: cfg.repo,
       release_id: rel.id
     });
+    logger.info('Deleted release ' + tag(machineId));
   } catch (e) {
-    logger.dbg(`Delete release fail: ${e.message}`);
+    logger.dbg('Delete release fail: ' + e.message);
   }
+
+  // Buoc 3: Xoa branch state
   try {
     await octokit.git.deleteRef({
       owner: cfg.owner,
       repo: cfg.repo,
-      ref: `heads/${branch(machineId)}`
+      ref: 'heads/' + branch(machineId)
     });
+    logger.info('Deleted branch ' + branch(machineId));
   } catch (e) {
-    logger.dbg(`Delete branch fail: ${e.message}`);
+    logger.dbg('Delete branch fail: ' + e.message);
   }
-  logger.ok(`Da xoa may: ${machineId}`);
+
+  logger.ok('Da xoa may: ' + machineId);
 }
 
+// ─── Cancel run ───
+export async function cancelRun(runId) {
+  await octokit.actions.cancelWorkflowRun({
+    owner: cfg.owner,
+    repo: cfg.repo,
+    run_id: runId
+  });
+  logger.ok('Cancelled run ' + runId);
+}
+
+// ─── Get log ───
 export async function getRunLogTail(runId, lines = 80) {
   try {
     const { data: jobs } = await octokit.actions.listJobsForWorkflowRun({
@@ -178,10 +292,10 @@ export async function getRunLogTail(runId, lines = 80) {
     for (const job of jobs.jobs || []) {
       try {
         const res = await fetch(
-          `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/actions/jobs/${job.id}/logs`,
+          'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/actions/jobs/' + job.id + '/logs',
           {
             headers: {
-              Authorization: `Bearer ${process.env.GH_TOKEN}`,
+              Authorization: 'Bearer ' + process.env.GH_TOKEN,
               Accept: 'application/vnd.github+json'
             },
             redirect: 'follow'

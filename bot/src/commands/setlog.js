@@ -14,8 +14,10 @@ export default {
     ),
 
   async execute(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     if (!isAdmin(interaction)) {
-      return interaction.reply({
+      return interaction.editReply({
         embeds: [{ color: 0xef4444, title: 'Chi Admin', description: 'Can role **AI-STV Admin**.' }],
         ephemeral: true
       });
@@ -25,7 +27,7 @@ export default {
 
     if (!channel) {
       setLogChannel(null);
-      return interaction.reply({ content: 'Da **tat** log channel.', ephemeral: true });
+      return interaction.editReply({ content: 'Da **tat** log channel.', ephemeral: true });
     }
 
     setLogChannel(channel.id);
@@ -36,7 +38,7 @@ export default {
       .setDescription(`Bot se gui log vao ${channel}`)
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.editReply({ embeds: [embed], ephemeral: true });
 
     await channel.send({
       embeds: [new EmbedBuilder()

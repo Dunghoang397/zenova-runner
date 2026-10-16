@@ -59,12 +59,7 @@ export function buildZenovaPanel(user, isAdmin = false) {
       .setCustomId('zenova:refresh')
       .setLabel('Refresh')
       .setEmoji('🔄')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setLabel('GitHub')
-      .setEmoji('🌐')
-      .setStyle(ButtonStyle.Link)
-      .setURL(`https://github.com/${process.env.GH_OWNER}/${process.env.GH_REPO}`)
+      .setStyle(ButtonStyle.Secondary)
   );
 
   return { embed, components: [row1, row2] };
@@ -271,12 +266,7 @@ export function buildHelpPanel() {
       .setCustomId('zenova:back')
       .setLabel('Quay lai')
       .setEmoji('◀️')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setLabel('GitHub')
-      .setEmoji('📖')
-      .setStyle(ButtonStyle.Link)
-      .setURL(`https://github.com/${process.env.GH_OWNER}/${process.env.GH_REPO}`)
+      .setStyle(ButtonStyle.Secondary)
   );
 
   return { embed, components: [row] };

@@ -14,8 +14,10 @@ export default {
     ),
 
   async execute(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     if (!isAdmin(interaction)) {
-      return interaction.reply({
+      return interaction.editReply({
         embeds: [{ color: 0xef4444, title: 'Chi Admin', description: 'Can role **AI-STV Admin**.' }],
         ephemeral: true
       });
@@ -30,6 +32,6 @@ export default {
       .setDescription(ok ? `Da reset XP cua ${user}` : `${user} chua tung co XP.`)
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] });
   }
 };

@@ -12,8 +12,10 @@ export default {
     .setDescription('[ADMIN] Huy run dang chay'),
 
   async execute(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     if (!isAdmin(interaction)) {
-      return interaction.reply({
+      return interaction.editReply({
         embeds: [{ color: COLORS.danger, title: 'Chi Admin', description: 'Can role **AI-STV Admin**.' }],
         ephemeral: true
       });
@@ -23,8 +25,10 @@ export default {
   },
 
   async handleComponent(interaction, rest) {
+    await interaction.deferUpdate();
+
     if (!isAdmin(interaction)) {
-      return interaction.reply({ content: 'Chi Admin', ephemeral: true });
+      return interaction.editReply({ content: 'Chi Admin', ephemeral: true });
     }
 
     const action = rest[0];

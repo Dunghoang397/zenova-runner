@@ -10,8 +10,10 @@ export default {
     .setDescription('[ADMIN] Danh sach toan bo may'),
 
   async execute(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     if (!isAdmin(interaction)) {
-      return interaction.reply({
+      return interaction.editReply({
         embeds: [{
           color: COLORS.danger,
           title: 'Chi Admin',
@@ -25,8 +27,10 @@ export default {
   },
 
   async handleComponent(interaction, rest) {
+    await interaction.deferUpdate();
+
     if (!isAdmin(interaction)) {
-      return interaction.reply({ content: 'Chi Admin', ephemeral: true });
+      return interaction.editReply({ content: 'Chi Admin', ephemeral: true });
     }
     if (rest[0] === 'refresh') {
       await interaction.deferUpdate();

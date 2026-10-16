@@ -7,7 +7,11 @@ export default {
     .setDescription('Kiem tra do tre bot'),
 
   async execute(interaction) {
-    const sent = await interaction.reply({ content: 'Dang do...', fetchReply: true });
+    await interaction.deferReply({ ephemeral: true });
+
+    await interaction.editReply({ content: 'Dang do...', fetchReply: true });
+
+    const sent = await interaction.fetchReply();
     const rtt = sent.createdTimestamp - interaction.createdTimestamp;
     const ws = interaction.client.ws.ping;
 
@@ -18,8 +22,8 @@ export default {
       .setTitle('Pong!')
       .setColor(color)
       .addFields(
-        { name: 'RTT', value: `\`${rtt}ms\``, inline: true },
-        { name: 'WebSocket', value: `\`${ws}ms\``, inline: true },
+        { name: 'RTT', value: '`' + rtt + 'ms`', inline: true },
+        { name: 'WebSocket', value: '`' + ws + 'ms`', inline: true },
         { name: 'Chat luong', value: quality, inline: true }
       )
       .setTimestamp()
