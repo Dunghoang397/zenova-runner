@@ -1,81 +1,48 @@
-# ═══════════════════════════════════════════════════════════════
-#  ZENOVA RUNNER v18 FINAL - ULTRA EDITION
-#  Windows 2022/2025 Lite - Multi Machine - Fast Publish
-#  Prompt by ALB SCRIPT
-# ═══════════════════════════════════════════════════════════════
-name: Zenova Runner
+name: Zenova Runner (v20 Final)
 
 on:
   workflow_dispatch:
     inputs:
       machine_id:
-        description: 'Machine ID (a-z, 0-9, dash)'
-        required: false
-        default: 'zenova-01'
+        description: "Machine ID"
+        required: true
         type: string
       owner_discord_id:
-        description: 'Discord User ID owner'
+        description: "Owner Discord ID"
         required: false
-        default: ''
+        default: ""
         type: string
       duration:
-        description: 'Duration'
+        description: "Duration"
         required: false
-        default: '6h00m'
+        default: "5h00m"
         type: choice
-        options: ['1h','3h','6h00m','12h00m','24h00m']
+        options: ["1h","3h","5h00m"]
       windows_image:
-        description: 'Windows version'
+        description: "Windows image"
         required: false
-        default: 'windows-2025'
+        default: "windows-2025"
         type: choice
-        options: ['windows-2022','windows-2025']
-      windows_mode:
-        description: 'Mode (Lite = fast + fix lag)'
-        required: false
-        default: 'lite'
-        type: choice
-        options: ['lite','full']
-      vdd_resolution:
-        description: 'Display resolution'
-        required: false
-        default: '1920x1080@60'
-        type: choice
-        options: ['1280x720@60','1920x1080@60','1920x1080@120','2560x1440@60','3840x2160@60']
+        options: ["windows-2025","windows-2022"]
       drive_letter:
-        description: 'Drive letter'
+        description: "Drive letter"
         required: false
-        default: 'X'
+        default: "X"
         type: string
       vhd_size_gb:
-        description: 'VHDX size (GB)'
+        description: "VHD size GB"
         required: false
-        default: '45'
+        default: "45"
         type: string
-      auto_save_interval_min:
-        description: 'Auto-save (min)'
+      fixed_password:
+        description: "Password"
         required: false
-        default: '15'
+        default: "Aistv@2026"
         type: string
-      auto_restart:
-        description: 'Auto restart new session'
-        required: false
-        default: true
-        type: boolean
-      keep_session:
-        description: 'Keep session when RDP disconnect'
-        required: false
-        default: true
-        type: boolean
-      enable_duckdns:
-        description: 'Update DuckDNS'
-        required: false
-        default: true
-        type: boolean
       choco_packages:
-        description: 'Extra apps (space-separated)'
+        description: "Choco packages"
         required: false
-        default: ''
+        default: ""
         type: string
 
 permissions:
@@ -83,977 +50,261 @@ permissions:
   actions: write
 
 concurrency:
-  group: zenova-rdp-${{ inputs.machine_id || 'zenova-01' }}
-  cancel-in-progress: true
+  group: zenova-rdp-${{ inputs.machine_id }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  runner:
-    runs-on: ${{ inputs.windows_image || 'windows-2025' }}
-    timeout-minutes: 1500
-
+  Zenova-RDP:
+    runs-on: ${{ inputs.windows_image }}
+    timeout-minutes: 360
     env:
       GH_TOKEN: ${{ secrets.PAT_TOKEN || github.token }}
       GH_REPO: ${{ github.repository }}
-      MACHINE_ID_INPUT: ${{ inputs.machine_id || 'zenova-01' }}
+      MACHINE_ID_INPUT: ${{ inputs.machine_id }}
       OWNER_DISCORD_ID: ${{ inputs.owner_discord_id }}
       DRIVE_LETTER: ${{ inputs.drive_letter }}
       VHD_SIZE_GB: ${{ inputs.vhd_size_gb }}
-      AUTO_SAVE_INTERVAL_MIN: ${{ inputs.auto_save_interval_min }}
-      WINDOWS_MODE: ${{ inputs.windows_mode }}
-      KEEP_SESSION: ${{ inputs.keep_session }}
-      PKGS: ${{ inputs.choco_packages }}
-      WEB_PORT: '8080'
-      SUNSHINE_WEB_PORT: '47990'
-
+      WEB_PORT: "8080"
+      SUNSHINE_WEB_PORT: "47990"
     steps:
-      # ═══════════════════════════════════════════════════════════
-      # 1. RESOLVE ID + PUBLISH STARTING
-      # ═══════════════════════════════════════════════════════════
-      - name: Resolve ID
+      - name: Pre-flight
         shell: pwsh
         run: |
-          $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-          "JOB_START_EPOCH=$nowEpoch" >> "$env:GITHUB_ENV"
+          if (-not (Get-Command 7z -EA SilentlyContinue)) { choco install 7zip -y --no-progress --limit-output; }
+          if (Get-Command 7z -EA SilentlyContinue) { "HAS_7Z=1" >> "$env:GITHUB_ENV" } else { "HAS_7Z=0" >> "$env:GITHUB_ENV" }
+          $b = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").CurrentBuild
+          "OS_BUILD=$b" >> "$env:GITHUB_ENV"
 
-          $cleanId = (("$env:MACHINE_ID_INPUT").Trim().ToLower() -replace '[^a-z0-9\-]', '-') -replace '\-+','-' -replace '^\-|\-$',''
-          if ([string]::IsNullOrWhiteSpace("$cleanId")) { $cleanId = 'zenova-01' }
-          "MACHINE_ID=$cleanId" >> "$env:GITHUB_ENV"
-          "RELEASE_TAG=zenova-storage-$cleanId" >> "$env:GITHUB_ENV"
-          "STATE_BRANCH=zenova-state-$cleanId" >> "$env:GITHUB_ENV"
-
-          $durMap = @{ '1h' = @(60,'1 hour'); '3h' = @(180,'3 hours'); '6h00m' = @(360,'6 hours'); '12h00m' = @(720,'12 hours'); '24h00m' = @(1440,'24 hours') }
+      - name: Resolve & Create Release
+        shell: pwsh
+        run: |
+          "JOB_START_EPOCH=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> "$env:GITHUB_ENV"
+          $cid = (("$env:MACHINE_ID_INPUT").Trim().ToLower() -replace "[^a-z0-9\-]", "-") -replace "\-+","-" -replace "^\-|\-$",""
+          if ([string]::IsNullOrWhiteSpace("$cid")) { $cid = "default" }
+          "MACHINE_ID=$cid" >> "$env:GITHUB_ENV"
+          "RELEASE_TAG=zenova-storage-$cid" >> "$env:GITHUB_ENV"
+          "STATE_BRANCH=zenova-state-$cid" >> "$env:GITHUB_ENV"
+          
           $d = "${{ inputs.duration }}"
-          if ($durMap.ContainsKey($d)) {
-              "TOTAL_MINUTES=$($durMap[$d][0])" >> "$env:GITHUB_ENV"
-              "DISPLAY_TIME=$($durMap[$d][1])" >> "$env:GITHUB_ENV"
-          } else {
-              "TOTAL_MINUTES=360" >> "$env:GITHUB_ENV"
-              "DISPLAY_TIME=6 hours" >> "$env:GITHUB_ENV"
-          }
-
-          "RDP_USER=$env:USERNAME" >> "$env:GITHUB_ENV"
-          "PROFILE_PATH=$env:USERPROFILE" >> "$env:GITHUB_ENV"
-
-          $dl = (("$env:DRIVE_LETTER").Trim() -replace '[^A-Za-z]', '').ToUpper()
-          if ((-not "$dl") -or ("$dl" -in @('C','D'))) { $dl = 'X' }
+          $t = 300; $disp = "5 giờ"
+          if ($d -eq "1h") { $t = 60; $disp = "1 giờ" }
+          if ($d -eq "3h") { $t = 180; $disp = "3 giờ" }
+          "TOTAL_MINUTES=$t" >> "$env:GITHUB_ENV"
+          "DISPLAY_TIME=$disp" >> "$env:GITHUB_ENV"
+          
+          $u = "$env:USERNAME"; $p = "$env:USERPROFILE"
+          "RDP_USER=$u" >> "$env:GITHUB_ENV"
+          "PROFILE_PATH=$p" >> "$env:GITHUB_ENV"
+          $sid = (New-Object System.Security.Principal.NTAccount("$u")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+          "RDP_USER_SID=$sid" >> "$env:GITHUB_ENV"
+          
+          $dl = (("$env:DRIVE_LETTER").Trim() -replace "[^A-Za-z]", "").ToUpper()
+          if ((-not "$dl") -or ("$dl" -in @("C","D"))) { $dl = "X" }
           "MOUNT_LETTER=$dl" >> "$env:GITHUB_ENV"
-
-          $build = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuild
-          "OS_BUILD=$build" >> "$env:GITHUB_ENV"
-          "WINDOWS_IMAGE=${{ inputs.windows_image }}" >> "$env:GITHUB_ENV"
-
+          
           $null = gh release view "$env:RELEASE_TAG" --repo "$env:GH_REPO" 2>&1
           if (($LASTEXITCODE) -ne 0) {
               $dummy = "$env:RUNNER_TEMP\init.txt"
-              Set-Content "$dummy" "Zenova $cleanId" -Encoding UTF8
-              gh release create "$env:RELEASE_TAG" "$dummy" --repo "$env:GH_REPO" --title "Zenova ($cleanId)" --notes "AI-STV Storage"
+              Set-Content "$dummy" "Zenova for $cid | SID: $sid | Owner: $env:OWNER_DISCORD_ID" -Encoding UTF8
+              gh release create "$env:RELEASE_TAG" "$dummy" --repo "$env:GH_REPO" --title "Zenova ($cid)" --notes "Owner: $env:OWNER_DISCORD_ID"
+              if (($LASTEXITCODE) -ne 0) { Write-Host "Create release FAIL" -ForegroundColor Red; exit 1 }
           }
           $global:LASTEXITCODE = 0
 
-          $quickState = [ordered]@{
-              machineId = "$cleanId"
-              ownerDiscordId = "$env:OWNER_DISCORD_ID"
-              status = "starting"
-              step = "init"
-              ready = $false
-              startedUtc = (Get-Date).ToUniversalTime().ToString('o')
-          }
-          $tempDir = "$env:RUNNER_TEMP\qstate"
-          New-Item -ItemType Directory -Force -Path "$tempDir" | Out-Null
-          $quickState | ConvertTo-Json -Depth 5 | Set-Content "$tempDir\state.json" -Encoding UTF8
-          foreach ($t in 1..3) {
-              gh release upload "$env:RELEASE_TAG" "$tempDir\state.json" --repo "$env:GH_REPO" --clobber 2>&1 | Out-Null
-              if (($LASTEXITCODE) -eq 0) { break }
-              Start-Sleep 2
-          }
-          $global:LASTEXITCODE = 0
-          Write-Host "PUBLISH 1: starting" -ForegroundColor Green
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 2. BUILD VHDX
-      # ═══════════════════════════════════════════════════════════
-      - name: Build VHDX
+      - name: Build VHD
         shell: pwsh
         run: |
           $dl = "$env:MOUNT_LETTER"
-          $vhdContainer = 'C:\AISTV-VHD-HOST'
-          New-Item -ItemType Directory -Force -Path "$vhdContainer" | Out-Null
-          $vhdFile = [System.IO.Path]::Combine("$vhdContainer", 'aistv-os-disk.vhdx')
-          $sizeBytes = ([int64]"$env:VHD_SIZE_GB") * 1GB
-          $mounted = $false
+          $vc = "C:\ZENOVA-VHD"
+          New-Item -ItemType Directory -Force -Path "$vc" | Out-Null
+          $vf = "$vc\zenova-os.vhdx"
+          $sb = ([int64]"$env:VHD_SIZE_GB") * 1GB
+          $m = $false
           try {
-              if (-not (Test-Path "$vhdFile")) {
-                  New-VHD -Path "$vhdFile" -SizeBytes ($sizeBytes) -Dynamic | Mount-VHD -PassThru | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -DriveLetter "$dl" -UseMaximumSize | Format-Volume -FileSystem NTFS -NewFileSystemLabel 'AISTV-OS' -Confirm:($false) | Out-Null
-              } else { Mount-VHD -Path "$vhdFile" }
-              $null = Get-PSDrive -Name "$dl" -ErrorAction Stop
-              if (Test-Path "${dl}:\") { $mounted = $true }
+              if (-not (Test-Path "$vf")) {
+                  New-VHD -Path "$vf" -SizeBytes ($sb) -Dynamic | Mount-VHD -PassThru | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -DriveLetter "$dl" -UseMaximumSize | Format-Volume -FileSystem NTFS -NewFileSystemLabel "ZENOVA" -Confirm:($false) | Out-Null
+              } else { Mount-VHD -Path "$vf" }
+              $null = Get-PSDrive -Name "$dl" -EA Stop
+              if (Test-Path "${dl}:\") { $m = $true }
           } catch {}
-          if (-not $mounted) {
-              $fb = [System.IO.Path]::Combine("$vhdContainer", 'VIRTUAL-DRIVE-ROOT')
+          if (-not $m) {
+              $fb = "$vc\VIRTUAL"
               New-Item -ItemType Directory -Force -Path "$fb" | Out-Null
               & subst "${dl}:" "$fb"
-              Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\DOS Devices' -Name "${dl}:" -Value "\??\$fb" -Type String -Force
-              $null = New-PSDrive -Name "$dl" -PSProvider FileSystem -Root "${dl}:\" -Scope Global -ErrorAction SilentlyContinue
+              $null = New-PSDrive -Name "$dl" -PSProvider FileSystem -Root "${dl}:\" -Scope Global -EA SilentlyContinue
           }
+          $sr = "${dl}:\ZENOVA-SYSTEM"
+          $ss = "$sr\sessions"; $sd = "$sr\DATA"; $so = "$sr\OS-OVERLAY"
+          $sf = "$ss\state.json"; $pr = "$sr\Users"; $ic = "$sr\installer-cache"
+          @("$sr","$ss","$sd","$so","$pr","${dl}:\Apps","$ic") | ForEach-Object { New-Item -ItemType Directory -Force -Path "$_" | Out-Null }
+          $bl = "$env:RUNNER_TEMP\baseline.json"
+          @{PF64=@(Get-ChildItem "C:\Program Files" -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name);PF86=@(Get-ChildItem "C:\Program Files (x86)" -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name);PD=@(Get-ChildItem "C:\ProgramData" -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name)} | ConvertTo-Json -Depth 4 | Set-Content "$bl" -Encoding UTF8
+          @("VHD_CONTAINER=$vc","VHD_FILE=$vf","SHARED_ROOT=$sr","SHARED_SESSION_DIR=$ss","SHARED_DATA_DIR=$sd","SHARED_OS_DIR=$so","SHARED_STATE_FILE=$sf","PROFILE_ROOT=$pr","BASELINE_FILE=$bl","CONTROL_SIGNAL_FILE=$env:RUNNER_TEMP\zenova-control.txt","INSTALLER_CACHE_PERSIST=$ic") | ForEach-Object { $_ >> "$env:GITHUB_ENV" }
 
-          $sharedRoot = "${dl}:\AISTV-SYSTEM"
-          $sharedSessionDir = "$sharedRoot\sessions"
-          $sharedDataDir = "$sharedRoot\DATA"
-          $sharedOsDir = "$sharedRoot\OS-OVERLAY"
-          $sharedStateFile = "$sharedSessionDir\rdp-session-state.json"
-          $profileStoreRoot = "$sharedRoot\Users"
-          $baselineFile = [System.IO.Path]::Combine("$env:RUNNER_TEMP", 'baseline-c-dirs.json')
-          $controlSignal = [System.IO.Path]::Combine("$env:RUNNER_TEMP", 'aistv-control-action.txt')
-
-          @("$sharedRoot", "$sharedSessionDir", "$sharedDataDir", "$sharedOsDir", "$profileStoreRoot", "${dl}:\Apps") | ForEach-Object {
-              New-Item -ItemType Directory -Force -Path "$_" | Out-Null
-          }
-
-          $baseline = @{
-              PF64 = @(Get-ChildItem 'C:\Program Files' -Directory -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-              PF86 = @(Get-ChildItem 'C:\Program Files (x86)' -Directory -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-              PD   = @(Get-ChildItem 'C:\ProgramData' -Directory -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-          }
-          $baseline | ConvertTo-Json -Depth 4 | Set-Content -Path "$baselineFile" -Encoding UTF8
-
-          "VHD_CONTAINER=$vhdContainer" >> "$env:GITHUB_ENV"
-          "VHD_FILE=$vhdFile" >> "$env:GITHUB_ENV"
-          "SHARED_ROOT=$sharedRoot" >> "$env:GITHUB_ENV"
-          "SHARED_SESSION_DIR=$sharedSessionDir" >> "$env:GITHUB_ENV"
-          "SHARED_DATA_DIR=$sharedDataDir" >> "$env:GITHUB_ENV"
-          "SHARED_OS_DIR=$sharedOsDir" >> "$env:GITHUB_ENV"
-          "SHARED_STATE_FILE=$sharedStateFile" >> "$env:GITHUB_ENV"
-          "PROFILE_ROOT=$profileStoreRoot" >> "$env:GITHUB_ENV"
-          "BASELINE_FILE=$baselineFile" >> "$env:GITHUB_ENV"
-          "CONTROL_SIGNAL_FILE=$controlSignal" >> "$env:GITHUB_ENV"
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 3. SAVE ENGINE
-      # ═══════════════════════════════════════════════════════════
-      - name: Save Engine
+      - name: RDP Config
         shell: pwsh
         run: |
-          $lines = @(
-              'param([string]$Reason = "session-end", [string]$Mode = "keep")',
-              '$ErrorActionPreference = "Continue"',
-              'if (("$env:DATA_RESTORED" -ne "1") -or ("$env:SESSION_READY" -ne "1")) { Write-Host "Skip - not ready"; exit 0 }',
-              '$root = "$env:SHARED_ROOT"; $osDir = "$env:SHARED_OS_DIR"; $dl = "$env:MOUNT_LETTER"',
-              'if ((-not "$root") -or (-not (Test-Path "$root"))) { exit 0 }',
-              '$apps = @("chrome","msedge","brave","firefox","coccoc","opera","vivaldi","discord","Telegram","Zalo","steam","EpicGamesLauncher","Spotify","Code","Notion","StarDesk")',
-              'Get-Process -Name $apps -EA SilentlyContinue | ForEach-Object { $null = $_.CloseMainWindow() }',
-              'Start-Sleep 3',
-              'Get-Process -Name $apps -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue',
-              'if ("$Reason" -eq "session-end") {',
-              '    Get-Service "*StarDesk*" -EA SilentlyContinue | Stop-Service -Force -EA SilentlyContinue',
-              '    Get-Process "StarDesk*" -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue',
-              '    & taskkill.exe /F /IM "StarDesk*" /T *> $null',
-              '}',
-              'Start-Sleep 2',
-              'Add-Type -AssemblyName System.Security -EA SilentlyContinue',
-              '$u = "$env:RDP_USER"; $profSrc = "$env:PROFILE_PATH"',
-              'if (("$profSrc") -and (Test-Path "$profSrc\AppData")) {',
-              '    Get-ChildItem "$profSrc\AppData" -Filter "Local State" -Recurse -File -Force -EA SilentlyContinue | ForEach-Object {',
-              '        try {',
-              '            $lsF = $_.FullName',
-              '            $j = Get-Content -Raw "$lsF" -Encoding UTF8 | ConvertFrom-Json',
-              '            if ($j.os_crypt -and $j.os_crypt.encrypted_key) {',
-              '                $eb = [Convert]::FromBase64String($j.os_crypt.encrypted_key)',
-              '                if ($eb.Length -gt 5 -and ([Text.Encoding]::ASCII.GetString($eb[0..4]) -eq "DPAPI")) {',
-              '                    $raw = [Security.Cryptography.ProtectedData]::Unprotect($eb[5..($eb.Length-1)],$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)',
-              '                    [Convert]::ToBase64String($raw) | Set-Content "$lsF.aistvkey" -Encoding ASCII -Force',
-              '                }',
-              '            }',
-              '        } catch {}',
-              '    }',
-              '}',
-              '$regBk = "$osDir\Registry"; New-Item -ItemType Directory -Force -Path "$regBk" | Out-Null',
-              'reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" "$regBk\Uninstall-x64.reg" /y *> $null',
-              'reg export "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" "$regBk\Uninstall-x86.reg" /y *> $null',
-              'reg export "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "$regBk\System-Env.reg" /y *> $null',
-              'reg export "HKLM\SOFTWARE\Microsoft\Cryptography" "$regBk\Machine-Cryptography.reg" /y *> $null',
-              'reg export "HKLM\SOFTWARE\Microsoft\SQMClient" "$regBk\Machine-SQMClient.reg" /y *> $null',
-              'New-Item -ItemType Directory -Force -Path "$regBk\AppSoftware" | Out-Null',
-              'Get-ChildItem "HKCU:\Software" -EA SilentlyContinue | Where-Object { $_.PSChildName -notin @("Microsoft","Classes","Policies","RegisteredApplications") } | ForEach-Object {',
-              '    $sn = ($_.PSChildName -replace ''[^A-Za-z0-9._\-]'',''_'')',
-              '    reg export "HKCU\Software\$($_.PSChildName)" "$regBk\AppSoftware\App-$sn.reg" /y *> $null',
-              '}',
-              'reg export "HKCU\Environment" "$regBk\User-Env.reg" /y *> $null',
-              'reg export "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" "$regBk\User-StartupRun.reg" /y *> $null',
-              'reg export "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Configuration" "$regBk\Display-Config.reg" /y *> $null',
-              'reg export "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Connectivity" "$regBk\Display-Conn.reg" /y *> $null',
-              'reg export "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\ScaleFactors" "$regBk\Display-Scale.reg" /y *> $null',
-              'reg export "HKCU\Control Panel\Desktop" "$regBk\User-Desktop.reg" /y *> $null',
-              'reg export "HKCU\Control Panel\Desktop\WindowMetrics" "$regBk\User-WindowMetrics.reg" /y *> $null',
-              'reg export "HKCU\Control Panel\Personalization" "$regBk\User-Personalization.reg" /y *> $null',
-              'reg export "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes" "$regBk\User-Themes.reg" /y *> $null',
-              'reg export "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers" "$regBk\User-Wallpapers.reg" /y *> $null',
-              'reg export "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "$regBk\User-Explorer.reg" /y *> $null',
-              'reg export "HKCU\Software\Microsoft\Multimedia\Audio" "$regBk\User-Audio.reg" /y *> $null',
-              'reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio" "$regBk\System-MMDevices-Audio.reg" /y *> $null',
-              '$drvBk = "$osDir\Drivers-Backup"; if (Test-Path "$drvBk") { Remove-Item "$drvBk" -Recurse -Force -EA SilentlyContinue }',
-              'if (("$u") -and ("$profSrc") -and (Test-Path "$profSrc")) {',
-              '    $profDst = "$root\Users\$u"; New-Item -ItemType Directory -Force -Path "$profDst" | Out-Null',
-              '    $ex = @("$profSrc\AppData\Roaming\Microsoft\Protect","$profSrc\AppData\Roaming\Microsoft\Crypto","$profSrc\AppData\Local\Microsoft\Credentials","$profSrc\AppData\Roaming\Microsoft\Credentials","$profSrc\AppData\Local\Temp","$profSrc\AppData\Local\Packages","$profSrc\AppData\Local\TileDataLayer","$profSrc\AppData\Local\ConnectedDevicesPlatform","$profSrc\AppData\Local\Microsoft\Windows\Explorer","$profSrc\AppData\Local\Microsoft\Windows\INetCache","$profSrc\AppData\Local\Microsoft\Windows\WebCache","$profSrc\AppData\Local\Microsoft\Windows\Caches","$profSrc\AppData\Local\D3DSCache","$profSrc\AppData\Local\NuGet","$profSrc\AppData\Local\Package Cache","$profSrc\AppData\Local\CrashDumps","$profSrc\AppData\Local\pip","$profSrc\AppData\Local\npm-cache","$profSrc\AppData\Local\yarn","$profSrc\AppData\Local\go-build","$profSrc\AppData\Local\ms-playwright","$profSrc\AppData\Local\Cypress","$profSrc\.dotnet","$profSrc\.nuget","$profSrc\.m2","$profSrc\.cargo","$profSrc\.rustup","$profSrc\.templateengine","$profSrc\.azure","$profSrc\.ServiceHub","$profSrc\vcpkg")',
-              '    $rcA = @("$profSrc","$profDst","/MIR","/XJ","/R:2","/W:1","/MT:8","/NFL","/NDL","/NJH","/NJS","/NP","/XF","NTUSER.DAT*","ntuser.ini","UsrClass.dat*","WebCacheV01.dat","parent.lock","lockfile","SingletonLock","SingletonCookie","SingletonSocket")',
-              '    foreach ($e in $ex) { $rcA += "/XD"; $rcA += "$e" }',
-              '    & robocopy @rcA *> $null; $global:LASTEXITCODE = 0',
-              '}',
-              'if (("$env:BASELINE_FILE") -and (Test-Path "$env:BASELINE_FILE")) {',
-              '    try {',
-              '        $base = Get-Content -Raw "$env:BASELINE_FILE" | ConvertFrom-Json',
-              '        $skip = @("Tailscale","chocolatey","Package Cache","Microsoft","Windows Defender")',
-              '        $cO = "$osDir\C-Drive-Overlay"',
-              '        foreach ($p in @(@("PF64","C:\Program Files"),@("PF86","C:\Program Files (x86)"),@("PD","C:\ProgramData"))) {',
-              '            $s = $p[0]; $src = $p[1]; New-Item -ItemType Directory -Force -Path "$cO\$s" | Out-Null',
-              '            $kn = if ($s -eq "PF64") { $base.PF64 } elseif ($s -eq "PF86") { $base.PF86 } else { $base.PD }',
-              '            Get-ChildItem "$src" -Directory -Force -EA SilentlyContinue | Where-Object { ($_.Name -notin $kn) -and ($_.Name -notin $skip) } | ForEach-Object {',
-              '                $d = "$cO\$s\$($_.Name)"; robocopy ($_.FullName) "$d" /MIR /XJ /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP *> $null',
-              '            }',
-              '        }',
-              '    } catch {}',
-              '}',
-              'try {',
-              '    $exR = "$osDir\DriveRoot-Extra"; New-Item -ItemType Directory -Force -Path "$exR" | Out-Null',
-              '    Get-ChildItem "${dl}:\" -Force -EA SilentlyContinue | Where-Object { $_.Name -notin @("AISTV-SYSTEM","System Volume Information","$RECYCLE.BIN","Pagefile.sys") } | ForEach-Object {',
-              '        $d = "$exR\$($_.Name)"',
-              '        if ($_.PSIsContainer) { robocopy ($_.FullName) "$d" /MIR /XJ /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP *> $null } else { Copy-Item ($_.FullName) "$d" -Force -EA SilentlyContinue }',
-              '    }',
-              '} catch {}',
-              '$global:LASTEXITCODE = 0',
-              '$stF = "$env:SHARED_STATE_FILE"',
-              'if (("$stF") -and (Test-Path "$stF")) { try { $st = Get-Content -Raw "$stF" | ConvertFrom-Json; $st.lastUpdatedUtc = (Get-Date).ToUniversalTime().ToString("o"); $st | ConvertTo-Json -Depth 5 | Set-Content "$stF" -Encoding UTF8 } catch {} }',
-              '$gS = "$env:RUNNER_TEMP\git-state-sync"',
-              'try {',
-              '    if (Test-Path "$gS") { Remove-Item "$gS" -Recurse -Force -EA SilentlyContinue }',
-              '    New-Item -ItemType Directory -Force -Path "$gS" | Out-Null',
-              '    Push-Location "$gS"',
-              '    git init -q',
-              '    git config user.name "AI-STV-Bot"; git config user.email "bot@aistv.local"',
-              '    git remote add origin "https://x-access-token:$($env:GH_TOKEN)@github.com/$($env:GH_REPO).git"',
-              '    git fetch origin "$env:STATE_BRANCH" -q 2>$null',
-              '    if (($LASTEXITCODE) -eq 0) { git checkout -B "$env:STATE_BRANCH" "origin/$env:STATE_BRANCH" -q } else { git checkout --orphan "$env:STATE_BRANCH" -q }',
-              '    robocopy "$env:SHARED_SESSION_DIR" "$gS\sessions" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP *> $null',
-              '    robocopy "$regBk" "$gS\registry" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP *> $null',
-              '    $global:LASTEXITCODE = 0',
-              '    git add -A; git commit -m "Sync [$env:MACHINE_ID][$Reason]" -q 2>$null; git push -u origin "$env:STATE_BRANCH" --force -q 2>$null',
-              '    Pop-Location',
-              '} catch { if (((Get-Location).Path) -eq "$gS") { Pop-Location } }',
-              '$pD = "$env:RUNNER_TEMP\gh-pack-$Reason"',
-              'Remove-Item "$pD" -Recurse -Force -EA SilentlyContinue; New-Item -ItemType Directory -Force -Path "$pD" | Out-Null',
-              '$ab = "$pD\aistv-drive.7z"',
-              'Push-Location "$root"',
-              '$args7z = @("a","-t7z","-mx=1","-mmt=on","-ssw","-v1900m","$ab","*","-xr!Pagefile.sys","-xr!swapfile.sys","-xr!System Volume Information")',
-              '& 7z @args7z *> $null',
-              'Pop-Location',
-              '$ch = @(Get-ChildItem "$pD" -Filter "aistv-drive.7z.*" | Sort-Object Name)',
-              'if (($ch.Count) -eq 0) { Write-Host "Pack fail"; exit 1 }',
-              '$mf = [ordered]@{ machineId = "$env:MACHINE_ID"; ownerDiscordId = "$env:OWNER_DISCORD_ID"; updatedUtc = (Get-Date).ToUniversalTime().ToString("o"); reason = "$Reason"; osBuild = "$env:OS_BUILD"; chunkCount = $ch.Count; chunks = @($ch | ForEach-Object { [ordered]@{ name = $_.Name; size = $_.Length } }) }',
-              '$mp = "$pD\drive-manifest.json"; $mf | ConvertTo-Json -Depth 5 | Set-Content "$mp" -Encoding UTF8',
-              '$botState = [ordered]@{ machineId = "$env:MACHINE_ID"; ownerDiscordId = "$env:OWNER_DISCORD_ID"; user = "$env:RDP_USER"; password = if ("$env:RDP_PASS_SOURCE" -ne "secret") { "$env:RDP_PASS" } else { "(secret)" }; tailscaleIp = "$env:TAILSCALE_IP"; tailscaleHostname = "$env:TAILSCALE_HOST"; duckdnsHost = "$env:DUCKDNS_HOST"; osBuild = "$env:OS_BUILD"; windowsImage = "$env:WINDOWS_IMAGE"; windowsMode = "$env:WINDOWS_MODE"; saveReason = "$Reason"; savedUtc = (Get-Date).ToUniversalTime().ToString("o"); ready = $false; status = if ($Mode -eq "restart") { "restarting" } else { "saved" } }',
-              '$bsp = "$pD\state.json"; $botState | ConvertTo-Json -Depth 5 | Set-Content "$bsp" -Encoding UTF8',
-              '$uf = @($ch | ForEach-Object { $_.FullName }) + @("$mp","$bsp")',
-              '$up = $false',
-              'foreach ($t in 1..3) { if (-not $up) { gh release upload "$env:RELEASE_TAG" @uf --repo "$env:GH_REPO" --clobber; if (($LASTEXITCODE) -eq 0) { $up = $true } else { Start-Sleep 10 } } }',
-              'if (-not $up) { Write-Host "Upload fail"; exit 1 }',
-              'try { $rj = gh release view "$env:RELEASE_TAG" --repo "$env:GH_REPO" --json assets | ConvertFrom-Json; $vn = @($ch.Name) + @("drive-manifest.json","state.json","init.txt"); @($rj.assets) | ForEach-Object { if (($_.name -like "aistv-drive.7z.*") -and ($_.name -notin $vn)) { gh release delete-asset "$env:RELEASE_TAG" ($_.name) --repo "$env:GH_REPO" -y *> $null } } } catch {}',
-              'Remove-Item "$pD" -Recurse -Force -EA SilentlyContinue',
-              'Write-Host "SAVE DONE [$Reason]" -ForegroundColor Green',
-              'exit 0'
-          )
-          Set-Content "$env:RUNNER_TEMP\save-data.ps1" -Value ($lines -join "`r`n") -Encoding UTF8
-          Write-Host "Save engine ready" -ForegroundColor Green
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 4. RESTORE
-      # ═══════════════════════════════════════════════════════════
-      - name: Restore
-        shell: pwsh
-        run: |
-          $dl = "$env:MOUNT_LETTER"
-          @('HKLM:\SOFTWARE\Policies\Google\Chrome','HKLM:\SOFTWARE\Policies\Microsoft\Edge','HKLM:\SOFTWARE\Policies\BraveSoftware\Brave','HKLM:\SOFTWARE\Policies\CocCoc\Browser') | ForEach-Object {
-              New-Item -Path "$_" -Force | Out-Null
-              Set-ItemProperty "$_" 'ApplicationBoundEncryptionEnabled' 0 -Type DWord -Force
-          }
-          $suffix = (("$env:MACHINE_ID").ToUpper() -replace '[^A-Z0-9]', '')
-          if ($suffix.Length -gt 8) { $suffix = $suffix.Substring(0,8) }
-          $fixedHost = if ($suffix) { "AISTV-$suffix" } else { 'AISTV-CLOUD-PC' }
-          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName' 'ComputerName' "$fixedHost" -Force -EA SilentlyContinue
-          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' 'ComputerName' "$fixedHost" -Force -EA SilentlyContinue
-          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' 'Hostname' "$fixedHost" -Force -EA SilentlyContinue
-          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' 'NV Hostname' "$fixedHost" -Force -EA SilentlyContinue
-
-          $dlDir = "$env:RUNNER_TEMP\gh-restore"
-          Remove-Item "$dlDir" -Recurse -Force -EA SilentlyContinue
-          New-Item -ItemType Directory -Force -Path "$dlDir" | Out-Null
-          gh release download "$env:RELEASE_TAG" --repo "$env:GH_REPO" --pattern 'drive-manifest.json' --dir "$dlDir" 2>$null
-          $mfF = "$dlDir\drive-manifest.json"
-          if (-not (Test-Path "$mfF")) {
-              Write-Host "First session" -ForegroundColor Cyan
-              'DATA_RESTORED=1' >> "$env:GITHUB_ENV"
-              exit 0
-          }
-          $manifest = Get-Content -Raw "$mfF" | ConvertFrom-Json
-          Write-Host "Restoring $($manifest.chunkCount) chunks" -ForegroundColor Cyan
-          $dw = $false
-          foreach ($t in 1..3) { if (-not $dw) { gh release download "$env:RELEASE_TAG" --repo "$env:GH_REPO" --pattern 'aistv-drive.7z.*' --dir "$dlDir"; if (($LASTEXITCODE) -eq 0) { $dw = $true } else { Start-Sleep 8 } } }
-          if (-not $dw) { exit 1 }
-          $fc = Get-ChildItem "$dlDir" -Filter 'aistv-drive.7z.001' | Select-Object -First 1
-          if (-not $fc) { exit 1 }
-          $stage = "$env:VHD_CONTAINER\restore-stage"
-          Remove-Item "$stage" -Recurse -Force -EA SilentlyContinue
-          New-Item -ItemType Directory -Force -Path "$stage" | Out-Null
-          & 7z x "$($fc.FullName)" "-o$stage" -y -mmt=on *> $null
-          Remove-Item "$dlDir" -Recurse -Force -EA SilentlyContinue
-
-          $sh = Get-ChildItem "$stage" -Recurse -Depth 6 -Filter 'rdp-session-state.json' -File -Force -EA SilentlyContinue | Select-Object -First 1
-          $sr = "$stage"
-          if ($sh) { $sr = $sh.Directory.Parent.FullName }
-          robocopy "$sr" "$env:SHARED_ROOT" /E /XJ /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP *> $null
-          $global:LASTEXITCODE = 0
-          New-Item -ItemType Directory -Force -Path "$env:SHARED_DATA_DIR" | Out-Null
-          $drvBk = "$env:SHARED_OS_DIR\Drivers-Backup"
-          if (Test-Path "$drvBk") { Remove-Item "$drvBk" -Recurse -Force -EA SilentlyContinue }
-          $exR = "$env:SHARED_OS_DIR\DriveRoot-Extra"
-          if (Test-Path "$exR") { robocopy "$exR" "${dl}:\" /E /XJ /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP *> $null; $global:LASTEXITCODE = 0 }
-          $cO = "$env:SHARED_OS_DIR\C-Drive-Overlay"
-          if (Test-Path "$cO\PF64") { robocopy "$cO\PF64" 'C:\Program Files' /E /XJ /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP *> $null }
-          if (Test-Path "$cO\PF86") { robocopy "$cO\PF86" 'C:\Program Files (x86)' /E /XJ /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP *> $null }
-          if (Test-Path "$cO\PD") { robocopy "$cO\PD" 'C:\ProgramData' /E /XJ /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NP *> $null }
-          $global:LASTEXITCODE = 0
-
-          $op = "$env:SHARED_ROOT\Users\$env:RDP_USER"
-          if (-not (Test-Path "$op")) { $fb = Get-ChildItem "$env:PROFILE_ROOT" -Directory -EA SilentlyContinue | Select-Object -First 1; if ($fb) { $op = $fb.FullName } }
-          if (Test-Path "$op") {
-              @("$op\AppData\Roaming\Microsoft\Protect","$op\AppData\Roaming\Microsoft\Crypto","$op\AppData\Local\Microsoft\Credentials","$op\AppData\Roaming\Microsoft\Credentials") | ForEach-Object { if (Test-Path "$_") { Remove-Item "$_" -Recurse -Force -EA SilentlyContinue } }
-              $sk = @("$op\AppData\Roaming\Microsoft\Protect","$op\AppData\Roaming\Microsoft\Crypto","$op\AppData\Local\Microsoft\Credentials","$op\AppData\Roaming\Microsoft\Credentials","$op\AppData\Local\Packages","$op\AppData\Local\TileDataLayer","$op\AppData\Local\ConnectedDevicesPlatform","$op\AppData\Local\Microsoft\Windows\Explorer")
-              $rcA = @("$op","$env:PROFILE_PATH","/E","/XJ","/COPY:DAT","/R:1","/W:1","/MT:8","/NFL","/NDL","/NJH","/NJS","/NP","/XF","NTUSER.DAT*","ntuser.ini","UsrClass.dat*","parent.lock","lockfile","SingletonLock","SingletonCookie","SingletonSocket")
-              foreach ($e in $sk) { $rcA += "/XD"; $rcA += "$e" }
-              & robocopy @rcA *> $null
-              $global:LASTEXITCODE = 0
-          }
-          Remove-Item "$stage" -Recurse -Force -EA SilentlyContinue
-
-          $regBk = "$env:SHARED_OS_DIR\Registry"
-          if (Test-Path "$regBk") {
-              Get-ChildItem "$regBk" -Filter '*.reg' -Recurse | ForEach-Object { reg import ($_.FullName) *>$null }
-              & RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters 1, True
-          }
-          if (Test-Path "$env:SHARED_STATE_FILE") { try { $st = Get-Content -Raw "$env:SHARED_STATE_FILE" | ConvertFrom-Json; if ($st.password) { "RESTORE_PASS=$($st.password)" >> "$env:GITHUB_ENV" } } catch {} }
-          'DATA_RESTORED=1' >> "$env:GITHUB_ENV"
-          Write-Host "Restore done" -ForegroundColor Green
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 5. LITE STAGE 1 (pwsh-safe)
-      # ═══════════════════════════════════════════════════════════
-      - name: Lite Stage 1 (Services + Registry)
-        if: ${{ inputs.windows_mode == 'lite' }}
-        shell: pwsh
-        run: |
-          Write-Host "Lite Stage 1..." -ForegroundColor Yellow
-          $svcs = @('DiagTrack','WSearch','SysMain','WerSvc','XblAuthManager','XblGameSave','XboxNetApiSvc','XboxGipSvc','Spooler','Fax','MapsBroker','RetailDemo','PcaSvc','TabletInputService','FontCache','WpnService','WbioSrvc','SEMgrSvc','PhoneSvc','RemoteRegistry','SharedAccess','WMPNetworkSvc')
-          foreach ($svc in $svcs) {
-              try { Stop-Service $svc -Force -EA SilentlyContinue } catch {}
-              try { Set-Service $svc -StartupType Disabled -EA SilentlyContinue } catch {}
-          }
-          try { Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' 0 -Type DWord -Force -EA SilentlyContinue } catch {}
-          try { Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting' 2 -Type DWord -Force -EA SilentlyContinue } catch {}
-          try { Set-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' 'MinAnimate' 0 -Type String -Force -EA SilentlyContinue } catch {}
-          try { Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'EnableTransparency' 0 -Type DWord -Force -EA SilentlyContinue } catch {}
-          try { Set-ItemProperty 'HKCU:\Control Panel\Desktop' 'DragFullWindows' '0' -Force -EA SilentlyContinue } catch {}
-          try { Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' 'LargeSystemCache' 1 -Type DWord -Force -EA SilentlyContinue } catch {}
-          try { Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl' 'Win32PrioritySeparation' 38 -Type DWord -Force -EA SilentlyContinue } catch {}
-          try { Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' 'DisablePagingExecutive' 1 -Type DWord -Force -EA SilentlyContinue } catch {}
-          try { Stop-Service wuauserv -Force -EA SilentlyContinue; Set-Service wuauserv -StartupType Disabled -EA SilentlyContinue } catch {}
-          try { Stop-Service UsoSvc -Force -EA SilentlyContinue; Set-Service UsoSvc -StartupType Disabled -EA SilentlyContinue } catch {}
-          try { Stop-Service WaaSMedicSvc -Force -EA SilentlyContinue; Set-Service WaaSMedicSvc -StartupType Disabled -EA SilentlyContinue } catch {}
-          try { Set-MpPreference -DisableRealtimeMonitoring ($true) -EA Stop } catch {}
-          try { Set-MpPreference -DisableBehaviorMonitoring ($true) -EA Stop } catch {}
-          try { Set-MpPreference -DisableIOAVProtection ($true) -EA Stop } catch {}
-          try { Get-ScheduledTask -TaskPath '\Microsoft\Windows\Application Experience\*' -EA SilentlyContinue | Disable-ScheduledTask -EA SilentlyContinue | Out-Null } catch {}
-          try { Get-ScheduledTask -TaskPath '\Microsoft\Windows\Customer Experience Improvement Program\*' -EA SilentlyContinue | Disable-ScheduledTask -EA SilentlyContinue | Out-Null } catch {}
-          Write-Host "Lite Stage 1 done" -ForegroundColor Green
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 6. LITE STAGE 2 (Bloatware - PS 5.1)
-      # ═══════════════════════════════════════════════════════════
-      - name: Lite Stage 2 (Bloatware - PS 5.1)
-        if: ${{ inputs.windows_mode == 'lite' }}
-        shell: powershell
-        run: |
-          Write-Host "Lite Stage 2: bloatware..." -ForegroundColor Yellow
-          $ErrorActionPreference = 'Continue'
-          try { Import-Module Appx -ErrorAction SilentlyContinue } catch {}
-          $bloat = @('Microsoft.3DBuilder','Microsoft.BingNews','Microsoft.BingWeather','Microsoft.GetHelp','Microsoft.Getstarted','Microsoft.MicrosoftOfficeHub','Microsoft.MicrosoftSolitaireCollection','Microsoft.People','Microsoft.SkypeApp','Microsoft.WindowsAlarms','Microsoft.WindowsFeedbackHub','Microsoft.WindowsMaps','Microsoft.ZuneMusic','Microsoft.ZuneVideo','Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.YourPhone','Microsoft.MixedReality.Portal','Microsoft.OneConnect','Microsoft.Print3D','Microsoft.Wallet','Microsoft.MicrosoftStickyNotes','Microsoft.Todos','Microsoft.PowerAutomateDesktop','Microsoft.WindowsSoundRecorder','Microsoft.WindowsCamera','Microsoft.MSPaint')
-          $removed = 0
-          foreach ($name in $bloat) {
-              try {
-                  $pkg = Get-AppxPackage -Name $name -AllUsers -ErrorAction SilentlyContinue
-                  if ($pkg) {
-                      Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                      if ($?) { $removed++ }
-                  }
-              } catch {}
-          }
-          Write-Host "Removed: $removed" -ForegroundColor Cyan
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 7. RDP + KEEP SESSION
-      # ═══════════════════════════════════════════════════════════
-      - name: Configure RDP
-        shell: pwsh
-        run: |
-          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' 'fDenyTSConnections' 0 -Force
-          $p = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
-          Set-ItemProperty "$p" 'UserAuthentication' 0 -Force
-          Set-ItemProperty "$p" 'SecurityLayer' 0 -Force
-          Set-ItemProperty "$p" 'fDisableAudioCapture' 0 -Type DWord -Force
-          Set-ItemProperty "$p" 'fDisableCam' 0 -Type DWord -Force
-          Set-ItemProperty "$p" 'fPromptForPassword' 0 -Type DWord -Force -EA SilentlyContinue
-          Set-ItemProperty "$p" 'fSingleSessionPerUser' 0 -Type DWord -Force -EA SilentlyContinue
+          $od = "$env:SHARED_OS_DIR"
+          foreach ($d in @("$od\InstalledApps","$od\bin","$od\Installers","$od\Sunshine-Config")) { New-Item -ItemType Directory -Force -Path "$d" | Out-Null }
+          "INSTALLER_CACHE=$od\Installers" >> "$env:GITHUB_ENV"
+          "SUNSHINE_PERSIST_CFG=$od\Sunshine-Config" >> "$env:GITHUB_ENV"
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" "fDenyTSConnections" 0 -Force
+          $p = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
+          Set-ItemProperty "$p" "UserAuthentication" 0 -Force
+          Set-ItemProperty "$p" "SecurityLayer" 0 -Force
+          Set-ItemProperty "$p" "fDisableAudioCapture" 0 -Type DWord -Force
           Restart-Service TermService -Force -EA SilentlyContinue
-          Start-Sleep 2
-
-          $tsPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-          New-Item -Path "$tsPol" -Force | Out-Null
-          Set-ItemProperty "$tsPol" 'fResetBroken' 0 -Type DWord -Force -EA SilentlyContinue
-          Set-ItemProperty "$tsPol" 'MaxIdleTime' 0 -Type DWord -Force -EA SilentlyContinue
-          Set-ItemProperty "$tsPol" 'MaxDisconnectionTime' 0 -Type DWord -Force -EA SilentlyContinue
-          Set-ItemProperty "$tsPol" 'fLogoffWhenNodc' 0 -Type DWord -Force -EA SilentlyContinue
-
-          Remove-NetFirewallRule -DisplayName 'Zenova-RDP' -EA SilentlyContinue
-          Remove-NetFirewallRule -DisplayName 'Zenova-TS' -EA SilentlyContinue
-          New-NetFirewallRule -DisplayName 'Zenova-RDP' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389,8080,47984,47989,47990,48010 -Profile Any | Out-Null
-          New-NetFirewallRule -DisplayName 'Zenova-TS' -Direction Inbound -Action Allow -Protocol Any -Profile Any -InterfaceAlias 'Tailscale' -ErrorAction SilentlyContinue | Out-Null
-          Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block -AllowInboundRules True
-
+          Start-Sleep 3
+          Remove-NetFirewallRule -DisplayName "ZENOVA-*" -EA SilentlyContinue
+          New-NetFirewallRule -DisplayName "ZENOVA-Tailscale" -Direction Inbound -Action Allow -Protocol Any -InterfaceAlias "Tailscale" -Profile Any | Out-Null
+          New-NetFirewallRule -DisplayName "ZENOVA-RDP" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389,8080 -RemoteAddress "100.64.0.0/10","127.0.0.1","::1" -Profile Any | Out-Null
           Set-Service TermService -StartupType Automatic -EA SilentlyContinue
-          Set-Service UmRdpService -StartupType Automatic -EA SilentlyContinue
           Start-Service TermService -EA SilentlyContinue
-          Start-Service UmRdpService -EA SilentlyContinue
-          exit 0
+          tzutil /s "SE Asia Standard Time"
+          powercfg /change standby-timeout-ac 0
+          powercfg /change monitor-timeout-ac 0
+          powercfg /hibernate off
 
-      # ═══════════════════════════════════════════════════════════
-      # 8. TAILSCALE + DUCKDNS
-      # ═══════════════════════════════════════════════════════════
-      - name: Tailscale + DuckDNS
+      - name: Tailscale
         env:
-          TS_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
-          DUCKDNS_DOMAIN: ${{ secrets.DUCKDNS_DOMAIN }}
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         shell: pwsh
         run: |
-          if (-not ("$env:TS_KEY")) { Write-Host "Missing TS_KEY"; exit 1 }
-          $ts = 'C:\Program Files\Tailscale\tailscale.exe'
+          if (-not ("$env:TAILSCALE_AUTH_KEY")) { exit 1 }
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
           if (-not (Test-Path "$ts")) {
-              $msi = "$env:RUNNER_TEMP\ts.msi"
-              for ($i=1; $i -le 3; $i++) {
-                  try {
-                      Invoke-WebRequest 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' -OutFile "$msi" -UseBasicParsing
-                      if ((Test-Path "$msi") -and ((Get-Item "$msi").Length -gt 5MB)) { break }
-                  } catch {}
-                  Start-Sleep 2
+              $cm = "$env:INSTALLER_CACHE_PERSIST\tailscale.msi"
+              if (-not (Test-Path "$cm")) {
+                  for ($i=1; $i -le 3; $i++) { try { Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$cm" -UseBasicParsing; if ((Test-Path "$cm") -and ((Get-Item "$cm").Length -gt 5MB)) { break } } catch {}; Start-Sleep 5 }
               }
-              if (Test-Path "$msi") { Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait }
+              if (Test-Path "$cm") { Start-Process msiexec.exe -ArgumentList "/i `"$cm`" /quiet /norestart" -Wait }
+              if (-not (Test-Path "$ts")) { choco install tailscale -y --no-progress --limit-output --ignore-checksums }
           }
           if (-not (Test-Path "$ts")) { exit 1 }
-          Set-Service 'Tailscale' -StartupType Automatic -EA SilentlyContinue
-          Start-Service 'Tailscale' -EA SilentlyContinue
-          Start-Sleep 3
-
-          $tsHost = "zenova-$($env:MACHINE_ID)"
-          & "$ts" up "--authkey=$env:TS_KEY" "--hostname=$tsHost" --accept-routes --accept-dns --reset --unattended 2>&1 | Out-Null
-          if (($LASTEXITCODE) -ne 0) { Start-Sleep 2; & "$ts" up "--authkey=$env:TS_KEY" "--hostname=$tsHost" --accept-routes --accept-dns --reset 2>&1 | Out-Null }
-
+          Set-Service "Tailscale" -StartupType Automatic -EA SilentlyContinue
+          Start-Service "Tailscale" -EA SilentlyContinue
+          Start-Sleep 6
+          $th = "zenova-$($env:MACHINE_ID)-$($env:GITHUB_RUN_ID)"
+          & "$ts" up "--authkey=$env:TAILSCALE_AUTH_KEY" "--hostname=$th" --accept-routes --accept-dns --reset --unattended
+          if (($LASTEXITCODE) -ne 0) { Start-Sleep 5; & "$ts" up "--authkey=$env:TAILSCALE_AUTH_KEY" "--hostname=$th" --accept-routes --accept-dns --reset; if (($LASTEXITCODE) -ne 0) { exit 1 } }
           $ip = $null
-          1..20 | ForEach-Object { if (-not $ip) { $o = (& "$ts" ip -4 2>&1 | Out-String).Trim(); if ("$o" -match '^\d+\.\d+\.\d+\.\d+$') { $ip = "$o" } else { Start-Sleep 2 } } }
+          1..20 | ForEach-Object { if (-not $ip) { $o = (& "$ts" ip -4 2>&1 | Out-String).Trim(); if ("$o" -match "^\d+\.\d+\.\d+\.\d+$") { $ip = "$o" } else { Start-Sleep 3 } } }
           if (-not $ip) { exit 1 }
           "TAILSCALE_IP=$ip" >> "$env:GITHUB_ENV"
-          "TAILSCALE_HOST=$tsHost" >> "$env:GITHUB_ENV"
-          Write-Host "Tailscale: $ip" -ForegroundColor Green
+          "TAILSCALE_HOSTNAME=$th" >> "$env:GITHUB_ENV"
 
-          if ("${{ inputs.enable_duckdns }}" -eq "true" -and "$env:DUCKDNS_TOKEN" -and "$env:DUCKDNS_DOMAIN") {
-              try {
-                  $domain = (("$env:DUCKDNS_DOMAIN").Trim().ToLower()) -replace '\.duckdns\.org$', ''
-                  $uri = "https://www.duckdns.org/update?domains=$domain&token=$($env:DUCKDNS_TOKEN)&ip=$ip"
-                  $res = Invoke-RestMethod -Uri "$uri" -TimeoutSec 15
-                  if (("$res").Trim() -eq 'OK') {
-                      "DUCKDNS_HOST=${domain}.duckdns.org" >> "$env:GITHUB_ENV"
-                      Write-Host "DuckDNS: ${domain}.duckdns.org" -ForegroundColor Green
-                  }
-              } catch {}
-          }
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 9. PUBLISH MIDWAY
-      # ═══════════════════════════════════════════════════════════
-      - name: Publish Midway
-        shell: pwsh
-        run: |
-          $state = [ordered]@{
-              machineId = "$env:MACHINE_ID"
-              ownerDiscordId = "$env:OWNER_DISCORD_ID"
-              user = "$env:RDP_USER"
-              tailscaleIp = "$env:TAILSCALE_IP"
-              tailscaleHostname = "$env:TAILSCALE_HOST"
-              duckdnsHost = "$env:DUCKDNS_HOST"
-              osBuild = "$env:OS_BUILD"
-              windowsImage = "$env:WINDOWS_IMAGE"
-              windowsMode = "$env:WINDOWS_MODE"
-              durationMinutes = [int]"$env:TOTAL_MINUTES"
-              status = "installing"
-              step = "tailscale_done"
-              ready = $false
-              partialReady = $true
-              startedUtc = (Get-Date).ToUniversalTime().ToString('o')
-          }
-          $tempDir = "$env:RUNNER_TEMP\midstate"
-          New-Item -ItemType Directory -Force -Path "$tempDir" | Out-Null
-          $state | ConvertTo-Json -Depth 5 | Set-Content "$tempDir\state.json" -Encoding UTF8
-          foreach ($t in 1..3) {
-              gh release upload "$env:RELEASE_TAG" "$tempDir\state.json" --repo "$env:GH_REPO" --clobber 2>&1 | Out-Null
-              if (($LASTEXITCODE) -eq 0) { break }
-              Start-Sleep 2
-          }
-          Write-Host "PUBLISH 2: midway" -ForegroundColor Green
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 10. VDD + AUDIO + SUNSHINE
-      # ═══════════════════════════════════════════════════════════
-      - name: VDD + Audio + Sunshine
-        shell: pwsh
-        env:
-          VDD_RES: ${{ inputs.vdd_resolution }}
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $instCache = "$env:SHARED_OS_DIR\Installers"
-          New-Item -ItemType Directory -Force -Path "$instCache" | Out-Null
-
-          # VDD USBMMIDD
-          try {
-              $vddDir = "$instCache\VDD"
-              New-Item -ItemType Directory -Force -Path "$vddDir" | Out-Null
-              $usbZip = "$vddDir\usbmmidd_v2.zip"
-              if (-not (Test-Path "$usbZip")) {
-                  Invoke-WebRequest -Uri 'https://www.amyuni.com/downloads/usbmmidd_v2.zip' -OutFile "$usbZip" -UseBasicParsing -TimeoutSec 45
-              }
-              if (Test-Path "$usbZip") {
-                  Expand-Archive -Path "$usbZip" -DestinationPath 'C:\' -Force
-                  if (Test-Path 'C:\usbmmidd_v2\deviceinstaller64.exe') {
-                      Push-Location 'C:\usbmmidd_v2'
-                      Get-ChildItem 'C:\usbmmidd_v2' -Filter '*.cer' -Recurse | ForEach-Object {
-                          Import-Certificate -FilePath ($_.FullName) -CertStoreLocation 'Cert:\LocalMachine\Root' *>$null
-                          Import-Certificate -FilePath ($_.FullName) -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' *>$null
-                      }
-                      & .\deviceinstaller64.exe install usbmmidd.inf usbmmidd *> $null
-                      $wudfPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\WUDF\Services\usbmmidd\Parameters'
-                      New-Item -Path "$wudfPath" -Force | Out-Null
-                      Set-ItemProperty -Path "$wudfPath" -Name '0' -Value '1920,1080,60' -Type String -Force
-                      Set-ItemProperty -Path "$wudfPath" -Name '1' -Value '1920,1080,120' -Type String -Force
-                      Set-ItemProperty -Path "$wudfPath" -Name '2' -Value '2560,1440,60' -Type String -Force
-                      Set-ItemProperty -Path "$wudfPath" -Name '3' -Value '3840,2160,60' -Type String -Force
-                      & .\deviceinstaller64.exe enableidd 1 *> $null
-                      Pop-Location
-                  }
-              }
-          } catch { Write-Host "VDD warning: $($_.Exception.Message)" -ForegroundColor Yellow }
-
-          # VB-Audio
-          try {
-              @('MMCSS','AudioEndpointBuilder','Audiosrv') | ForEach-Object {
-                  Set-Service -Name "$_" -StartupType Automatic -EA SilentlyContinue
-                  Start-Service -Name "$_" -EA SilentlyContinue
-              }
-              $vbDir = "$instCache\VBCable"
-              New-Item -ItemType Directory -Force -Path "$vbDir" | Out-Null
-              $vbZip = "$vbDir\VBCABLE_Driver_Pack43.zip"
-              if (-not (Test-Path "$vbZip")) {
-                  try { Invoke-WebRequest 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip' -OutFile "$vbZip" -UseBasicParsing -TimeoutSec 45 }
-                  catch { Invoke-WebRequest 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip' -OutFile "$vbZip" -UseBasicParsing -TimeoutSec 45 }
-              }
-              if ((Test-Path "$vbZip") -and (-not (Test-Path "$vbDir\VBCABLE_Setup_x64.exe"))) {
-                  Expand-Archive -Path "$vbZip" -DestinationPath "$vbDir" -Force
-              }
-              Get-ChildItem "$vbDir" -Include '*.cer','*.cat','*.sys','*.exe' -Recurse -EA SilentlyContinue | ForEach-Object {
-                  if ($_.Extension -eq '.cer') {
-                      Import-Certificate -FilePath ($_.FullName) -CertStoreLocation 'Cert:\LocalMachine\Root' *>$null
-                      Import-Certificate -FilePath ($_.FullName) -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' *>$null
-                  } else {
-                      $sig = Get-AuthenticodeSignature -FilePath ($_.FullName) -EA SilentlyContinue
-                      if ($sig -and $sig.SignerCertificate) {
-                          foreach ($sn in @('Root','TrustedPublisher')) {
-                              $st = New-Object System.Security.Cryptography.X509Certificates.X509Store($sn,'LocalMachine')
-                              $st.Open('ReadWrite'); $st.Add($sig.SignerCertificate); $st.Close()
-                          }
-                      }
-                  }
-              }
-              $vbInf = Get-ChildItem "$vbDir" -Filter '*64*.inf' -Recurse -EA SilentlyContinue | Select-Object -First 1
-              if (-not $vbInf) { $vbInf = Get-ChildItem "$vbDir" -Filter '*.inf' -Recurse -EA SilentlyContinue | Select-Object -First 1 }
-              if ($vbInf) { pnputil /add-driver ($vbInf.FullName) /install *> $null }
-              pnputil /scan-devices *> $null
-              Restart-Service 'Audiosrv' -Force -EA SilentlyContinue
-          } catch { Write-Host "Audio warning: $($_.Exception.Message)" -ForegroundColor Yellow }
-
-          # Sunshine
-          $sunDir = 'C:\Program Files\Sunshine'
-          $sunExe = "$sunDir\sunshine.exe"
-          if (-not (Test-Path "$sunExe")) {
-              try {
-                  Remove-Item 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*Sunshine*' -Recurse -Force -EA SilentlyContinue
-                  Remove-Item 'HKLM:\SOFTWARE\LizardByte*' -Recurse -Force -EA SilentlyContinue
-                  $job = Start-Job { choco install sunshine -y --no-progress --limit-output --ignore-checksums }
-                  if (-not (Wait-Job $job -Timeout 120)) {
-                      Stop-Job $job -EA SilentlyContinue
-                      Get-Process | Where-Object { ($_.Name -match 'sunshine|choco') -and ($_.Name -ne 'sunshinesvc') } | Stop-Process -Force -EA SilentlyContinue
-                  }
-                  Remove-Job $job -Force -EA SilentlyContinue
-                  $global:LASTEXITCODE = 0
-              } catch {}
-          }
-          if (Test-Path "$sunExe") {
-              Write-Host "Sunshine installed" -ForegroundColor Green
-          }
-          $global:LASTEXITCODE = 0
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 11. USER SETUP + SETTINGS FIX + DPAPI REKEY
-      # ═══════════════════════════════════════════════════════════
-      - name: Setup User
+      - name: User Config
         shell: pwsh
         env:
           RDP_PASSWORD_SECRET: ${{ secrets.RDP_PASSWORD }}
+          FIXED_PASS_INPUT: ${{ inputs.fixed_password }}
         run: |
-          $user = "$env:RDP_USER"
-          $profPath = "$env:PROFILE_PATH"
-
-          if (-not ([string]::IsNullOrWhiteSpace("$env:RDP_PASSWORD_SECRET"))) {
-              $matKhau = ("$env:RDP_PASSWORD_SECRET").Trim()
-              $source = 'secret'
-          } elseif ("$env:RESTORE_PASS") {
-              $matKhau = "$env:RESTORE_PASS"
-              $source = 'restored'
-          } else {
-              $matKhau = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 20 | ForEach-Object { [char]$_ })
-              $source = 'random'
-          }
-          Write-Host "::add-mask::$matKhau"
-
-          Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'DisableCAD' 1 -Type DWord -Force -EA SilentlyContinue
-          Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'LocalAccountTokenFilterPolicy' 1 -Type DWord -Force -EA SilentlyContinue
-          & net accounts /minpwlen:0 /maxpwage:unlimited /minpwage:0 /uniquepw:0 *> $null
-          & net user "$user" "$matKhau" *> $null
-          & net user "$user" /active:yes /expires:never *> $null
-          & net localgroup Administrators "$user" /add *> $null
-          & net localgroup "Remote Desktop Users" "$user" /add *> $null
+          $u = "$env:RDP_USER"; $p = "$env:PROFILE_PATH"
+          if (-not ([string]::IsNullOrWhiteSpace("$env:RDP_PASSWORD_SECRET"))) { $mp = ("$env:RDP_PASSWORD_SECRET").Trim(); $s = "secret" }
+          elseif (-not ([string]::IsNullOrWhiteSpace("$env:FIXED_PASS_INPUT"))) { $mp = ("$env:FIXED_PASS_INPUT").Trim(); $s = "fixed" }
+          else { $mp = "Aistv@2026"; $s = "default" }
+          & net accounts /minpwlen:0 /maxpwage:unlimited *> $null
+          $ok = $false
+          for ($i=1; $i -le 3; $i++) { & net user "$u" "$mp" *> $null; if ($LASTEXITCODE -eq 0) { $ok = $true; break }; Start-Sleep 2 }
           $global:LASTEXITCODE = 0
-
-          # Windows Settings fix
+          & net user "$u" /active:yes /expires:never *> $null
+          & net localgroup Administrators "$u" /add *> $null
+          & net localgroup "Remote Desktop Users" "$u" /add *> $null
+          foreach ($svc in @("AppXSvc","StateRepository","Audiosrv","AudioEndpointBuilder")) { try { Set-Service $svc -StartupType Automatic -EA SilentlyContinue; Start-Service $svc -EA SilentlyContinue } catch {} }
+          "RDP_PASS=$mp" >> "$env:GITHUB_ENV"
+          "RDP_PASS_SOURCE=$s" >> "$env:GITHUB_ENV"
           try {
-              Set-Service 'AppXSvc' -StartupType Automatic -EA SilentlyContinue
-              Start-Service 'AppXSvc' -EA SilentlyContinue
-              Set-Service 'StateRepository' -StartupType Automatic -EA SilentlyContinue
-              Start-Service 'StateRepository' -EA SilentlyContinue
-              if (Test-Path "$profPath\AppData\Local\Packages") { & icacls "$profPath\AppData\Local\Packages" /grant "*S-1-15-2-1:(OI)(CI)F" /T /C /Q *> $null }
-              if (Test-Path 'C:\Windows\ImmersiveControlPanel\appxmanifest.xml') { Add-AppxPackage -Register 'C:\Windows\ImmersiveControlPanel\appxmanifest.xml' -DisableDevelopmentMode -EA SilentlyContinue }
-              $global:LASTEXITCODE = 0
+              $wl = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+              Set-ItemProperty $wl "AutoAdminLogon" "1" -Type String -Force -EA SilentlyContinue
+              Set-ItemProperty $wl "DefaultUserName" "$u" -Type String -Force -EA SilentlyContinue
+              Set-ItemProperty $wl "DefaultPassword" "$mp" -Type String -Force -EA SilentlyContinue
           } catch {}
+          "SESSION_READY=1" >> "$env:GITHUB_ENV"
 
-          $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-          Set-ItemProperty $wl 'AutoAdminLogon' '1' -Type String -Force -EA SilentlyContinue
-          Set-ItemProperty $wl 'DefaultUserName' "$user" -Type String -Force -EA SilentlyContinue
-          Set-ItemProperty $wl 'DefaultPassword' "$matKhau" -Type String -Force -EA SilentlyContinue
-          Set-ItemProperty $wl 'DefaultDomainName' "$env:COMPUTERNAME" -Type String -Force -EA SilentlyContinue
-
-          "RDP_PASS=$matKhau" >> "$env:GITHUB_ENV"
-          "RDP_PASS_SOURCE=$source" >> "$env:GITHUB_ENV"
-
-          # DPAPI rekey
-          try {
-              Add-Type -AssemblyName System.Security -EA SilentlyContinue
-              $cnt = 0
-              Get-ChildItem "$profPath\AppData" -Filter 'Local State.aistvkey' -Recurse -File -Force -EA SilentlyContinue | ForEach-Object {
-                  try {
-                      $kf = $_.FullName
-                      $lsF = $kf -replace '\.aistvkey$',''
-                      if (-not (Test-Path "$lsF")) { return }
-                      $b64 = (Get-Content -Raw "$kf" -Encoding ASCII).Trim()
-                      if ([string]::IsNullOrWhiteSpace("$b64")) { return }
-                      $raw = [Convert]::FromBase64String("$b64")
-                      $ne = [System.Security.Cryptography.ProtectedData]::Protect($raw,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
-                      $pre = [System.Text.Encoding]::ASCII.GetBytes('DPAPI')
-                      $fin = New-Object byte[] ($pre.Length + $ne.Length)
-                      [Array]::Copy($pre,0,$fin,0,$pre.Length)
-                      [Array]::Copy($ne,0,$fin,$pre.Length,$ne.Length)
-                      $j = Get-Content -Raw "$lsF" -Encoding UTF8 | ConvertFrom-Json
-                      if ($j.os_crypt) {
-                          $j.os_crypt.encrypted_key = [Convert]::ToBase64String($fin)
-                          if ($j.os_crypt.PSObject.Properties['app_bound_encrypted_key']) { $j.os_crypt.PSObject.Properties.Remove('app_bound_encrypted_key') }
-                          $j | ConvertTo-Json -Depth 32 -Compress | Set-Content "$lsF" -Encoding UTF8 -Force
-                          $cnt++
-                      }
-                  } catch {}
-              }
-              Write-Host "DPAPI rekey: $cnt files" -ForegroundColor Green
-          } catch {}
-
-          # State file for polling
-          $stateFile = "$env:SHARED_STATE_FILE"
-          New-Item -ItemType Directory -Force -Path (Split-Path "$stateFile") | Out-Null
-          $state = [ordered]@{
-              machineId = "$env:MACHINE_ID"
-              ownerDiscordId = "$env:OWNER_DISCORD_ID"
-              user = "$user"
-              password = if ("$source" -ne 'secret') { "$matKhau" } else { "(secret)" }
-              tailscaleIp = "$env:TAILSCALE_IP"
-              tailscaleHostname = "$env:TAILSCALE_HOST"
-              duckdnsHost = "$env:DUCKDNS_HOST"
-              osBuild = "$env:OS_BUILD"
-              windowsImage = "$env:WINDOWS_IMAGE"
-              windowsMode = "$env:WINDOWS_MODE"
-              startUtc = (Get-Date).ToUniversalTime().ToString('o')
-              durationMinutes = [int]"$env:TOTAL_MINUTES"
-              ready = $false
-              status = "ready-soon"
-          }
-          $state | ConvertTo-Json -Depth 5 | Set-Content "$stateFile" -Encoding UTF8
-
-          # Desktop shortcuts
-          try {
-              $dd = "$profPath\Desktop"
-              New-Item -ItemType Directory -Force -Path "$dd" | Out-Null
-              $ws = New-Object -ComObject WScript.Shell
-              foreach ($d in @("$dd",'C:\Users\Public\Desktop')) {
-                  try {
-                      $l1 = $ws.CreateShortcut("$d\ZENOVA-DRIVE.lnk"); $l1.TargetPath = "$($env:MOUNT_LETTER):\"; $l1.Save()
-                      $l2 = $ws.CreateShortcut("$d\ZENOVA-SHARED.lnk"); $l2.TargetPath = "$env:SHARED_DATA_DIR"; $l2.Save()
-                      $l3 = $ws.CreateShortcut("$d\WEB-PANEL.url"); $l3.TargetPath = "http://127.0.0.1:$($env:WEB_PORT)/"; $l3.Save()
-                  } catch {}
-              }
-          } catch {}
-
-          'SESSION_READY=1' >> "$env:GITHUB_ENV"
-          Write-Host "User ready" -ForegroundColor Green
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 12. PUBLISH READY
-      # ═══════════════════════════════════════════════════════════
-      - name: Publish Ready
+      - name: Publish state.json
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $state = [ordered]@{
+          $u = "$env:RDP_USER"
+          $uO = Get-LocalUser -Name "$u" -EA SilentlyContinue
+          $st = [ordered]@{
               machineId = "$env:MACHINE_ID"
               ownerDiscordId = "$env:OWNER_DISCORD_ID"
-              user = "$env:RDP_USER"
-              password = if ("$env:RDP_PASS_SOURCE" -ne 'secret') { "$env:RDP_PASS" } else { "(secret)" }
-              tailscaleIp = "$env:TAILSCALE_IP"
-              tailscaleHostname = "$env:TAILSCALE_HOST"
-              duckdnsHost = "$env:DUCKDNS_HOST"
+              user = "$u"
+              sid = "$($uO.SID.Value)"
+              password = "$env:RDP_PASS"
+              passwordSource = "$env:RDP_PASS_SOURCE"
+              windowsImage = "${{ inputs.windows_image }}"
               osBuild = "$env:OS_BUILD"
-              windowsImage = "$env:WINDOWS_IMAGE"
-              windowsMode = "$env:WINDOWS_MODE"
-              startUtc = (Get-Date).ToUniversalTime().ToString('o')
+              driveLetter = "$env:MOUNT_LETTER"
+              tailscaleIp = "$env:TAILSCALE_IP"
+              tailscaleHostname = "$env:TAILSCALE_HOSTNAME"
               durationMinutes = [int]"$env:TOTAL_MINUTES"
+              startUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]"$env:JOB_START_EPOCH").UtcDateTime.ToString("o")
+              runId = "$env:GITHUB_RUN_ID"
               status = "ready"
               step = "ready"
               ready = $true
-              keepSession = "$env:KEEP_SESSION"
-              readyUtc = (Get-Date).ToUniversalTime().ToString('o')
+              lastUpdatedUtc = (Get-Date).ToUniversalTime().ToString("o")
           }
-          $tempDir = "$env:RUNNER_TEMP\ready-state"
-          New-Item -ItemType Directory -Force -Path "$tempDir" | Out-Null
-          $state | ConvertTo-Json -Depth 5 | Set-Content "$tempDir\state.json" -Encoding UTF8
-          foreach ($t in 1..3) {
-              gh release upload "$env:RELEASE_TAG" "$tempDir\state.json" --repo "$env:GH_REPO" --clobber 2>&1 | Out-Null
-              if (($LASTEXITCODE) -eq 0) { break }
-              Start-Sleep 2
-          }
-          Write-Host "PUBLISH 3: READY - $env:MACHINE_ID | $env:TAILSCALE_IP" -ForegroundColor Green
-          exit 0
+          New-Item -ItemType Directory -Force -Path (Split-Path "$env:SHARED_STATE_FILE") | Out-Null
+          $st | ConvertTo-Json -Depth 5 | Set-Content "$env:SHARED_STATE_FILE" -Encoding UTF8
+          $td = "$env:RUNNER_TEMP\state-upload"
+          New-Item -ItemType Directory -Force -Path "$td" | Out-Null
+          Copy-Item "$env:SHARED_STATE_FILE" "$td\state.json" -Force
+          $up = $false
+          foreach ($t in 1..3) { if (-not $up) { gh release upload "$env:RELEASE_TAG" "$td\state.json" --repo "$env:GH_REPO" --clobber; if (($LASTEXITCODE) -eq 0) { $up = $true } else { Start-Sleep 5 } } }
+          if (-not $up) { exit 1 }
+          Write-Host "state.json uploaded" -ForegroundColor Green
 
-      # ═══════════════════════════════════════════════════════════
-      # 13. CHOCO APPS
-      # ═══════════════════════════════════════════════════════════
-      - name: Install Apps
-        if: ${{ inputs.choco_packages != '' }}
+      - name: Connection Info
         shell: pwsh
         run: |
-          if ("$env:PKGS" -notmatch '^[A-Za-z0-9 ._\-]*$') { exit 1 }
-          $pkgs = @("$env:PKGS" -split '\s+' | Where-Object { $_ })
-          foreach ($p in $pkgs) {
-              Write-Host "Installing $p..." -ForegroundColor Cyan
-              choco install "$p" -y --no-progress --limit-output --ignore-checksums
-              $global:LASTEXITCODE = 0
-          }
-          exit 0
+          Write-Host "MACHINE: $env:MACHINE_ID"
+          Write-Host "IP: $env:TAILSCALE_IP"
+          Write-Host "HOSTNAME: $env:TAILSCALE_HOSTNAME"
+          Write-Host "USER: $env:RDP_USER"
+          Write-Host "PASS: $env:RDP_PASS"
+          Write-Host "RDP: $env:TAILSCALE_IP:3389"
 
-      # ═══════════════════════════════════════════════════════════
-      # 14. WEB PANEL 8080
-      # ═══════════════════════════════════════════════════════════
-      - name: Web Panel
+      - name: Keepalive
+        id: keepalive
         shell: pwsh
         run: |
-          $webLines = @(
-              '$ErrorActionPreference = "Continue"',
-              '$listener = [System.Net.HttpListener]::new()',
-              '$listener.Prefixes.Add("http://+:$($env:WEB_PORT)/")',
-              'try { $listener.Start() } catch { exit 1 }',
-              '$endEpoch = ([long]"$env:JOB_START_EPOCH") + (([long]"$env:TOTAL_MINUTES") * 60)',
-              'while ($listener.IsListening) {',
-              '    try {',
-              '        $ctx = $listener.GetContext(); $req = $ctx.Request; $resp = $ctx.Response',
-              '        $path = $req.Url.AbsolutePath.ToLower()',
-              '        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()',
-              '        $remain = [math]::Max(0, ($endEpoch) - ($now))',
-              '        $h = [math]::Floor(($remain) / 3600); $m = [math]::Floor((($remain) % 3600) / 60)',
-              '        $statusMsg = ""',
-              '        if (($req.HttpMethod) -eq "POST") {',
-              '            if ("$path" -eq "/action/save") { Set-Content "$env:CONTROL_SIGNAL_FILE" "SAVE_NOW" -Encoding UTF8; $statusMsg = "Save signal sent!" }',
-              '            elseif ("$path" -eq "/action/restart") { Set-Content "$env:CONTROL_SIGNAL_FILE" "RESTART_SESSION" -Encoding UTF8; $statusMsg = "Restart signal sent!" }',
-              '            elseif ("$path" -eq "/action/stop") { Set-Content "$env:CONTROL_SIGNAL_FILE" "STOP_SESSION" -Encoding UTF8; $statusMsg = "Stop signal sent!" }',
-              '        }',
-              '        $banner = if ("$statusMsg") { "<div class=''alert''>$statusMsg</div>" } else { "" }',
-              '        $html = "<!DOCTYPE html><html><head><meta charset=''utf-8''><title>Zenova $($env:MACHINE_ID)</title><style>body{background:#0f172a;color:#f8fafc;font-family:Segoe UI;margin:0;padding:24px;display:flex;justify-content:center}.c{max-width:560px;width:100%;background:#1e293b;border-radius:16px;padding:24px}h1{color:#38bdf8;margin:0 0 8px}.sub{color:#94a3b8;font-size:14px;margin-bottom:20px}.info{background:#0f172a;border-radius:12px;padding:16px;margin-bottom:20px}.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e293b}.v{color:#4ade80;font-weight:600}.alert{background:#065f46;padding:14px;border-radius:10px;margin-bottom:18px;font-size:14px}button{width:100%;padding:14px;margin-top:10px;border:none;border-radius:10px;font-size:15px;font-weight:600;color:#fff;cursor:pointer}.b1{background:#0284c7}.b2{background:#d97706}.b3{background:#dc2626}</style></head><body><div class=''c''><h1>Zenova Control Panel</h1><div class=''sub''>$($env:MACHINE_ID) | $($env:TAILSCALE_IP)</div>$banner<div class=''info''><div class=''row''><span>Tailscale IP</span><span class=''v''>$($env:TAILSCALE_IP)</span></div><div class=''row''><span>User</span><span class=''v''>$($env:RDP_USER)</span></div><div class=''row''><span>Time left</span><span class=''v''>${h}h ${m}m</span></div></div><form method=''POST'' action=''/action/save''><button class=''b1''>Save Now</button></form><form method=''POST'' action=''/action/restart''><button class=''b2''>Save and Restart</button></form><form method=''POST'' action=''/action/stop''><button class=''b3''>Save and Stop</button></form></div></body></html>"',
-              '        $buf = [System.Text.Encoding]::UTF8.GetBytes("$html")',
-              '        $resp.ContentType = "text/html; charset=utf-8"; $resp.ContentLength64 = $buf.Length',
-              '        $resp.OutputStream.Write($buf, 0, $buf.Length); $resp.OutputStream.Close()',
-              '    } catch {}',
-              '}'
-          )
-          Set-Content "$env:RUNNER_TEMP\web-panel.ps1" -Value ($webLines -join "`r`n") -Encoding UTF8
-          Start-Process pwsh.exe -ArgumentList '-NoProfile','-WindowStyle','Hidden','-File',"`"$env:RUNNER_TEMP\web-panel.ps1`""
-          Write-Host "Web Panel: http://$($env:TAILSCALE_IP):$($env:WEB_PORT)/" -ForegroundColor Green
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 15. KEEPALIVE / HOLD SESSION
-      # ═══════════════════════════════════════════════════════════
-      - name: Hold Session
-        id: hold
-        shell: pwsh
-        env:
-          AUTO_RESTART: ${{ inputs.auto_restart }}
-          INPUT_DURATION: ${{ inputs.duration }}
-          INPUT_WINDOWS: ${{ inputs.windows_image }}
-          INPUT_MODE: ${{ inputs.windows_mode }}
-          INPUT_RES: ${{ inputs.vdd_resolution }}
-        run: |
-          $totalSec = ([int]"$env:TOTAL_MINUTES") * 60
-          $startTime = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-          $endTime = $startTime + $totalSec
-          $saveScript = "$env:RUNNER_TEMP\save-data.ps1"
-          $sigFile = "$env:CONTROL_SIGNAL_FILE"
-          $saveIntervalSec = ([int]"$env:AUTO_SAVE_INTERVAL_MIN") * 60
-          if ($saveIntervalSec -le 0) { $saveIntervalSec = 999999 }
-          $lastSave = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-          $lastRecover = 0
-
-          Write-Host "Hold session: $env:TOTAL_MINUTES min" -ForegroundColor Yellow
-
+          $ee = ([long]"$env:JOB_START_EPOCH") + (([long]"$env:TOTAL_MINUTES") * 60)
+          $sf = "$env:CONTROL_SIGNAL_FILE"
+          $stateFile = "$env:SHARED_STATE_FILE"
+          $lhb = Get-Date
           while ($true) {
-              if (Test-Path "$sigFile") {
-                  $cmd = (Get-Content -Raw "$sigFile" -EA SilentlyContinue).Trim()
-                  Remove-Item "$sigFile" -Force -EA SilentlyContinue
-                  if ("$cmd" -eq 'SAVE_NOW') {
-                      Write-Host "Manual save" -ForegroundColor Cyan
-                      & "$saveScript" -Reason 'manual' -Mode 'keep'
-                      $lastSave = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-                  } elseif ("$cmd" -eq 'RESTART_SESSION') {
-                      Write-Host "Restart requested" -ForegroundColor Yellow
-                      & "$saveScript" -Reason 'restart' -Mode 'restart'
-                      'FORCE_NEXT_SESSION=1' >> "$env:GITHUB_ENV"
-                      break
-                  } elseif ("$cmd" -eq 'STOP_SESSION') {
-                      Write-Host "Stop requested" -ForegroundColor Red
-                      & "$saveScript" -Reason 'stop' -Mode 'restart'
-                      'FORCE_STOP_ONLY=1' >> "$env:GITHUB_ENV"
-                      break
-                  }
+              if (Test-Path "$sf") {
+                  $cmd = (Get-Content -Raw "$sf" -EA SilentlyContinue).Trim()
+                  Remove-Item "$sf" -Force -EA SilentlyContinue
+                  if ("$cmd" -eq "RESTART_SESSION") { "FORCE_NEXT_SESSION=1" >> "$env:GITHUB_ENV"; break }
+                  if ("$cmd" -eq "STOP_SESSION") { "FORCE_STOP_ONLY=1" >> "$env:GITHUB_ENV"; break }
               }
-
-              $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-              $remainSec = $endTime - $now
-              if ($remainSec -le 0) { break }
-
-              if ($now - $lastSave -ge $saveIntervalSec) {
-                  Write-Host "Auto-save" -ForegroundColor Cyan
-                  & "$saveScript" -Reason 'auto-save' -Mode 'keep'
-                  $lastSave = $now
-              }
-
-              if (($env:KEEP_SESSION -eq 'true') -and ($now - $lastRecover -ge 30)) {
+              if (((Get-Date) - $lhb).TotalSeconds -ge 60) {
                   try {
-                      $lines = @(query session 2>$null)
-                      foreach ($line in $lines) {
-                          if ("$line" -match "^\s*>?\s*$([regex]::Escape("$env:RDP_USER"))\s+" -and "$line" -match "\s+Disc\s+") {
-                              $parts = (($line -replace '^>','').Trim()) -split '\s+'
-                              $sid = $parts[1..($parts.Count-1)] | Where-Object { $_ -match '^\d+$' } | Select-Object -First 1
-                              if ($sid) { & tscon.exe "$sid" /dest:console 2>&1 | Out-Null }
-                          }
+                      if (Test-Path "$stateFile") {
+                          $st = Get-Content -Raw "$stateFile" | ConvertFrom-Json
+                          $st.lastUpdatedUtc = (Get-Date).ToUniversalTime().ToString("o")
+                          $st | ConvertTo-Json -Depth 5 | Set-Content "$stateFile" -Encoding UTF8
                       }
                   } catch {}
-                  $lastRecover = $now
+                  $lhb = Get-Date
               }
-
-              if ($now % 60 -lt 5) {
-                  $svc = Get-Service 'TermService' -EA SilentlyContinue
-                  if ($svc.Status -ne 'Running') { Start-Service 'TermService' -EA SilentlyContinue }
-                  $remainMin = [math]::Floor($remainSec / 60)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $env:MACHINE_ID | RDP:$($svc.Status) | Left:${remainMin}m" -ForegroundColor Blue
-              }
-              Start-Sleep 20
+              $r = ($ee) - ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+              if (($r) -le 0) { break }
+              Start-Sleep 2
           }
 
-          Write-Host "Session end - save final" -ForegroundColor Yellow
-          & "$saveScript" -Reason 'session-end' -Mode 'restart'
-
-          if (("$env:AUTO_RESTART" -eq 'true' -or "$env:FORCE_NEXT_SESSION" -eq '1') -and "$env:FORCE_STOP_ONLY" -ne '1') {
-              $wf = [System.IO.Path]::GetFileName(("$env:GITHUB_WORKFLOW_REF" -split '@')[0])
-              gh workflow run "$wf" --ref "$env:GITHUB_REF_NAME" `
-                  -f "machine_id=$env:MACHINE_ID" `
-                  -f "owner_discord_id=$env:OWNER_DISCORD_ID" `
-                  -f "duration=$env:INPUT_DURATION" `
-                  -f "windows_image=$env:INPUT_WINDOWS" `
-                  -f "windows_mode=$env:INPUT_MODE" `
-                  -f "vdd_resolution=$env:INPUT_RES" `
-                  -f "drive_letter=$env:MOUNT_LETTER" `
-                  -f "vhd_size_gb=$env:VHD_SIZE_GB" `
-                  -f "auto_save_interval_min=$env:AUTO_SAVE_INTERVAL_MIN" `
-                  -f "auto_restart=true" `
-                  -f "keep_session=$env:KEEP_SESSION"
-              Write-Host "Next session triggered" -ForegroundColor Green
-          }
-          exit 0
-
-      # ═══════════════════════════════════════════════════════════
-      # 16. CLEANUP
-      # ═══════════════════════════════════════════════════════════
-      - name: Cleanup
-        if: always()
+      - name: Trigger next
+        if: ${{ always() && steps.keepalive.outcome == 'success' && env.FORCE_STOP_ONLY != '1' }}
         shell: pwsh
+        env:
+          DURATION: ${{ inputs.duration }}
+          WIN_IMAGE: ${{ inputs.windows_image }}
+          FIXED_PASS: ${{ inputs.fixed_password }}
+          PKGS: ${{ inputs.choco_packages }}
         run: |
-          try {
-              Get-Service '*StarDesk*' -EA SilentlyContinue | Stop-Service -Force -EA SilentlyContinue
-              Get-Process 'StarDesk*' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
-          } catch {}
-          try {
-              $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
-              if (Test-Path "$ts") { & "$ts" logout 2>&1 | Out-Null; & "$ts" down 2>&1 | Out-Null }
-          } catch {}
-          try {
-              Remove-NetFirewallRule 'Zenova-RDP' -EA SilentlyContinue
-              Remove-NetFirewallRule 'Zenova-TS' -EA SilentlyContinue
-          } catch {}
-          Write-Host "Done" -ForegroundColor Green
-          exit 0
+          $wf = [System.IO.Path]::GetFileName(("$env:GITHUB_WORKFLOW_REF" -split "@")[0])
+          gh workflow run "$wf" --ref "$env:GITHUB_REF_NAME" -f "machine_id=$env:MACHINE_ID" -f "owner_discord_id=$env:OWNER_DISCORD_ID" -f "duration=$env:DURATION" -f "windows_image=$env:WIN_IMAGE" -f "fixed_password=$env:FIXED_PASS" -f "choco_packages=$env:PKGS"
+          if (($LASTEXITCODE) -ne 0) { throw "Trigger next fail" }
