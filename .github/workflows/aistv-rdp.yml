@@ -32,7 +32,7 @@ on:
       vhd_size_gb:
         description: "VHD size GB"
         required: false
-        default: "45"
+        default: " 1024"
         type: string
       fixed_password:
         description: "Password"
@@ -42,7 +42,7 @@ on:
       choco_packages:
         description: "Choco packages"
         required: false
-        default: ""
+        default: "googlechrome microsoft-edge discord spotify vlc 7zip tailscale$2
         type: string
 
 permissions:
