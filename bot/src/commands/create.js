@@ -8,6 +8,45 @@ import { logger } from '../lib/logger.js';
 import { isMember, isAdmin } from '../lib/security.js';
 import { COLORS } from '../ui/embeds.js';
 
+// ═══ AUTO-INJECTED: Duration validator ═══
+function normalizeDuration(input) {
+  if (!input) return '5h00m';
+  const str = String(input).toLowerCase().trim();
+  const hourMatch = str.match(/(\d+)\s*h/);
+  const hours = hourMatch ? parseInt(hourMatch[1]) : 5;
+  if (hours <= 1) return '1h';
+  if (hours <= 3) return '3h';
+  return '5h00m';
+}
+
+// ═══ AUTO-INJECTED: Remove invalid workflow inputs ═══
+const VALID_WORKFLOW_INPUTS = [
+  'machine_id',
+  'owner_discord_id',
+  'duration',
+  'windows_image',
+  'drive_letter',
+  'vhd_size_gb',
+  'fixed_password',
+  'choco_packages'
+];
+
+function sanitizeInputs(obj) {
+  const result = {};
+  for (const key of VALID_WORKFLOW_INPUTS) {
+    if (obj[key] !== undefined && obj[key] !== null && obj[key] !== '') {
+      result[key] = obj[key];
+    }
+  }
+  // Luôn đảm bảo duration hợp lệ
+  if (result.duration) {
+    result.duration = normalizeDuration(result.duration);
+  } else {
+    result.duration = '5h00m';
+  }
+  return result;
+}
+
 function progressBar(pct) {
   const filled = Math.round(pct / 5);
   const empty = 20 - filled;
@@ -155,21 +194,15 @@ export default {
       await interaction.editReply({ embeds: [buildEmbed(null)], components: [] });
 
       try {
-        await dispatchCreate({
+        await dispatchCreate(sanitizeInputs({
           machine_id: machineName,
           owner_discord_id: interaction.user.id,
-          duration: '6h00m',
+          duration: normalizeDuration('6h00m'),
           drive_letter: 'X',
           vhd_size_gb: '45',
           windows_image: windows,
-          windows_mode: 'lite',
-          vdd_resolution: '1920x1080@60',
-          auto_save_interval_min: '15',
-          auto_restart: true,
-          keep_session: true,
-          enable_duckdns: true,
           choco_packages: ''
-        });
+        }));
         logger.ok('Dispatched: ' + machineName);
       } catch (e) {
         logger.err('Dispatch fail: ' + e.message);
