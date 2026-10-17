@@ -67,6 +67,46 @@ jobs:
       WEB_PORT: "8080"
       SUNSHINE_WEB_PORT: "47990"
     steps:
+      - name: Fix Lag Advanced
+        shell: pwsh
+        run: |
+          Write-Host "Fixing lag advanced..."
+          $svcs = @('DiagTrack','WSearch','SysMain','WerSvc','XblAuthManager','XblGameSave','XboxNetApiSvc','XboxGipSvc','Spooler','MapsBroker','PcaSvc','TabletInputService','RetailDemo','dmwappushservice','WbioSrvc','PhoneSvc','PrintNotify','WpnService','WpnUserService')
+          foreach ($s in $svcs) { try { Stop-Service $s -Force -EA SilentlyContinue; Set-Service $s -StartupType Disabled -EA SilentlyContinue } catch {} }
+          try {
+              $dwm = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
+              if (-not (Test-Path $dwm)) { New-Item $dwm -Force | Out-Null }
+              Set-ItemProperty $dwm 'VisualFXSetting' 2 -Type DWord -Force -EA SilentlyContinue
+              Set-ItemProperty 'HKCU:\Control Panel\Desktop' 'DragFullWindows' '0' -Force -EA SilentlyContinue
+              Set-ItemProperty 'HKCU:\Control Panel\Desktop' 'MenuShowDelay' '0' -Force -EA SilentlyContinue
+              Set-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' 'MinAnimate' '0' -Force -EA SilentlyContinue
+          } catch {}
+          try {
+              Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' 0 -Type DWord -Force -EA SilentlyContinue
+          } catch {}
+          try {
+              $cdm = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+              if (Test-Path $cdm) {
+                  Set-ItemProperty $cdm 'SubscribedContent-338389Enabled' 0 -Type DWord -Force -EA SilentlyContinue
+                  Set-ItemProperty $cdm 'SystemPaneSuggestionsEnabled' 0 -Type DWord -Force -EA SilentlyContinue
+                  Set-ItemProperty $cdm 'SoftLandingEnabled' 0 -Type DWord -Force -EA SilentlyContinue
+              }
+          } catch {}
+          try {
+              $search = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
+              if (-not (Test-Path $search)) { New-Item $search -Force | Out-Null }
+              Set-ItemProperty $search 'BingSearchEnabled' 0 -Type DWord -Force -EA SilentlyContinue
+              Set-ItemProperty $search 'CortanaConsent' 0 -Type DWord -Force -EA SilentlyContinue
+          } catch {}
+          powercfg /change standby-timeout-ac 0
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change disk-timeout-ac 0
+          powercfg /hibernate off
+          powercfg /setactive SCHEME_MIN
+          $bloat = @('Microsoft.3DBuilder','Microsoft.BingNews','Microsoft.BingWeather','Microsoft.GetHelp','Microsoft.Getstarted','Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.YourPhone','Microsoft.WindowsFeedbackHub','Microsoft.WindowsMaps','Microsoft.ZuneMusic','Microsoft.ZuneVideo','Microsoft.WindowsAlarms','Microsoft.SkypeApp','Microsoft.MicrosoftOfficeHub','Microsoft.MicrosoftSolitaireCollection','Microsoft.People','Microsoft.MixedReality.Portal','Microsoft.OneConnect','Microsoft.Print3D','Microsoft.ScreenSketch','Microsoft.Wallet','Microsoft.WindowsCalculator','Microsoft.WindowsCamera','Microsoft.WindowsCommunicationsApps')
+          foreach ($a in $bloat) { Get-AppxPackage -Name "$a" -AllUsers -EA SilentlyContinue | Remove-AppxPackage -AllUsers -EA SilentlyContinue }
+          Write-Host "Fix lag done"
+
       - name: Pre-flight
         shell: pwsh
         run: |
@@ -155,6 +195,46 @@ jobs:
       WEB_PORT: "8080"
       SUNSHINE_WEB_PORT: "47990"
     steps:
+      - name: Fix Lag Advanced
+        shell: pwsh
+        run: |
+          Write-Host "Fixing lag advanced..."
+          $svcs = @('DiagTrack','WSearch','SysMain','WerSvc','XblAuthManager','XblGameSave','XboxNetApiSvc','XboxGipSvc','Spooler','MapsBroker','PcaSvc','TabletInputService','RetailDemo','dmwappushservice','WbioSrvc','PhoneSvc','PrintNotify','WpnService','WpnUserService')
+          foreach ($s in $svcs) { try { Stop-Service $s -Force -EA SilentlyContinue; Set-Service $s -StartupType Disabled -EA SilentlyContinue } catch {} }
+          try {
+              $dwm = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
+              if (-not (Test-Path $dwm)) { New-Item $dwm -Force | Out-Null }
+              Set-ItemProperty $dwm 'VisualFXSetting' 2 -Type DWord -Force -EA SilentlyContinue
+              Set-ItemProperty 'HKCU:\Control Panel\Desktop' 'DragFullWindows' '0' -Force -EA SilentlyContinue
+              Set-ItemProperty 'HKCU:\Control Panel\Desktop' 'MenuShowDelay' '0' -Force -EA SilentlyContinue
+              Set-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' 'MinAnimate' '0' -Force -EA SilentlyContinue
+          } catch {}
+          try {
+              Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' 0 -Type DWord -Force -EA SilentlyContinue
+          } catch {}
+          try {
+              $cdm = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+              if (Test-Path $cdm) {
+                  Set-ItemProperty $cdm 'SubscribedContent-338389Enabled' 0 -Type DWord -Force -EA SilentlyContinue
+                  Set-ItemProperty $cdm 'SystemPaneSuggestionsEnabled' 0 -Type DWord -Force -EA SilentlyContinue
+                  Set-ItemProperty $cdm 'SoftLandingEnabled' 0 -Type DWord -Force -EA SilentlyContinue
+              }
+          } catch {}
+          try {
+              $search = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
+              if (-not (Test-Path $search)) { New-Item $search -Force | Out-Null }
+              Set-ItemProperty $search 'BingSearchEnabled' 0 -Type DWord -Force -EA SilentlyContinue
+              Set-ItemProperty $search 'CortanaConsent' 0 -Type DWord -Force -EA SilentlyContinue
+          } catch {}
+          powercfg /change standby-timeout-ac 0
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change disk-timeout-ac 0
+          powercfg /hibernate off
+          powercfg /setactive SCHEME_MIN
+          $bloat = @('Microsoft.3DBuilder','Microsoft.BingNews','Microsoft.BingWeather','Microsoft.GetHelp','Microsoft.Getstarted','Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.YourPhone','Microsoft.WindowsFeedbackHub','Microsoft.WindowsMaps','Microsoft.ZuneMusic','Microsoft.ZuneVideo','Microsoft.WindowsAlarms','Microsoft.SkypeApp','Microsoft.MicrosoftOfficeHub','Microsoft.MicrosoftSolitaireCollection','Microsoft.People','Microsoft.MixedReality.Portal','Microsoft.OneConnect','Microsoft.Print3D','Microsoft.ScreenSketch','Microsoft.Wallet','Microsoft.WindowsCalculator','Microsoft.WindowsCamera','Microsoft.WindowsCommunicationsApps')
+          foreach ($a in $bloat) { Get-AppxPackage -Name "$a" -AllUsers -EA SilentlyContinue | Remove-AppxPackage -AllUsers -EA SilentlyContinue }
+          Write-Host "Fix lag done"
+
       - name: Pre-flight
         shell: pwsh
         run: |
@@ -176,9 +256,9 @@ jobs:
           "STATE_BRANCH=zenova-state-$cid" >> "$env:GITHUB_ENV"
           
           $d = "${{ inputs.duration }}"
-          $t = 300; $disp = "5 giÃ¡Â»Â"
-          if ($d -eq "1h") { $t = 60; $disp = "1 giÃ¡Â»Â" }
-          if ($d -eq "3h") { $t = 180; $disp = "3 giÃ¡Â»Â" }
+          $t = 300; $disp = "5 giÃƒÂ¡Ã‚Â»Ã‚Â"
+          if ($d -eq "1h") { $t = 60; $disp = "1 giÃƒÂ¡Ã‚Â»Ã‚Â" }
+          if ($d -eq "3h") { $t = 180; $disp = "3 giÃƒÂ¡Ã‚Â»Ã‚Â" }
           "TOTAL_MINUTES=$t" >> "$env:GITHUB_ENV"
           "DISPLAY_TIME=$disp" >> "$env:GITHUB_ENV"
           
@@ -347,15 +427,15 @@ jobs:
           $failed = @()
           $installed = @()
           foreach ($pkg in $all) {
-              Write-Host "Ã°Å¸â€œÂ¦ CÃƒÂ i $pkg..." -ForegroundColor Cyan
+              Write-Host "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â¦ CÃƒÆ’Ã‚Â i $pkg..." -ForegroundColor Cyan
               choco install "$pkg" -y --no-progress --limit-output --cache "$env:SHARED_OS_DIR\choco-cache"
               $code = $LASTEXITCODE
               if ($code -eq 0 -or $code -eq 3010) { $installed += $pkg } else { $failed += $pkg }
               $global:LASTEXITCODE = 0
           }
           
-          Write-Host "Ã¢Å“â€¦ Installed: $($installed -join ', ')" -ForegroundColor Green
-          if ($failed.Count -gt 0) { Write-Host "Ã¢Å¡Â Ã¯Â¸Â  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
+          Write-Host "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Installed: $($installed -join ', ')" -ForegroundColor Green
+          if ($failed.Count -gt 0) { Write-Host "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
           
           "APPS_READY=1" >> "$env:GITHUB_ENV"
           "INSTALLED_APPS=$($installed -join ',')" >> "$env:GITHUB_ENV"
@@ -439,7 +519,7 @@ jobs:
               
               if (((Get-Date) - $lastLog).TotalMinutes -ge 10) {
                   $h = [math]::Floor($r/3600); $m = [math]::Floor(($r%3600)/60)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | CÃƒÂ²n: ${h}h${m}m" -ForegroundColor Blue
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | CÃƒÆ’Ã‚Â²n: ${h}h${m}m" -ForegroundColor Blue
                   $lastLog = Get-Date
               }
               
@@ -481,9 +561,9 @@ jobs:
           "STATE_BRANCH=zenova-state-$cid" >> "$env:GITHUB_ENV"
           
           $d = "${{ inputs.duration }}"
-          $t = 300; $disp = "5 giÃ¡Â»Â"
-          if ($d -eq "1h") { $t = 60; $disp = "1 giÃ¡Â»Â" }
-          if ($d -eq "3h") { $t = 180; $disp = "3 giÃ¡Â»Â" }
+          $t = 300; $disp = "5 giÃƒÂ¡Ã‚Â»Ã‚Â"
+          if ($d -eq "1h") { $t = 60; $disp = "1 giÃƒÂ¡Ã‚Â»Ã‚Â" }
+          if ($d -eq "3h") { $t = 180; $disp = "3 giÃƒÂ¡Ã‚Â»Ã‚Â" }
           "TOTAL_MINUTES=$t" >> "$env:GITHUB_ENV"
           "DISPLAY_TIME=$disp" >> "$env:GITHUB_ENV"
           
@@ -645,21 +725,20 @@ jobs:
           $saved = @(); if (Test-Path "$pkgF") { $saved = @(Get-Content "$pkgF" | Where-Object { $_ -match '^[A-Za-z0-9._\-]+$' }) }
           $inp = @()
           if (-not ([string]::IsNullOrWhiteSpace("$env:PKGS"))) { $inp = @("$env:PKGS" -split '\s+' | Where-Object { $_ }) }
-          $all = @($preset + $saved + $inp | Select-Object -Unique)
           $all | Set-Content "$pkgF" -Encoding UTF8
           
           $failed = @()
           $installed = @()
           foreach ($pkg in $all) {
-              Write-Host "Ã°Å¸â€œÂ¦ CÃƒÂ i $pkg..." -ForegroundColor Cyan
+              Write-Host "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â¦ CÃƒÆ’Ã‚Â i $pkg..." -ForegroundColor Cyan
               choco install "$pkg" -y --no-progress --limit-output --cache "$env:SHARED_OS_DIR\choco-cache"
               $code = $LASTEXITCODE
               if ($code -eq 0 -or $code -eq 3010) { $installed += $pkg } else { $failed += $pkg }
               $global:LASTEXITCODE = 0
           }
           
-          Write-Host "Ã¢Å“â€¦ Installed: $($installed -join ', ')" -ForegroundColor Green
-          if ($failed.Count -gt 0) { Write-Host "Ã¢Å¡Â Ã¯Â¸Â  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
+          Write-Host "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Installed: $($installed -join ', ')" -ForegroundColor Green
+          if ($failed.Count -gt 0) { Write-Host "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
           
           "APPS_READY=1" >> "$env:GITHUB_ENV"
           "INSTALLED_APPS=$($installed -join ',')" >> "$env:GITHUB_ENV"
@@ -743,7 +822,7 @@ jobs:
               
               if (((Get-Date) - $lastLog).TotalMinutes -ge 10) {
                   $h = [math]::Floor($r/3600); $m = [math]::Floor(($r%3600)/60)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | CÃƒÂ²n: ${h}h${m}m" -ForegroundColor Blue
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | CÃƒÆ’Ã‚Â²n: ${h}h${m}m" -ForegroundColor Blue
                   $lastLog = Get-Date
               }
               
