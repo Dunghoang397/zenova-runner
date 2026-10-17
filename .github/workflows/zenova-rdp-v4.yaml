@@ -1,4 +1,4 @@
-name: Zenova RDP (main)
+name: Zenova RDP Main
 
 on:
   workflow_dispatch: {}
@@ -86,9 +86,9 @@ jobs:
           "STATE_BRANCH=zenova-state-$cid" >> "$env:GITHUB_ENV"
           
           $d = "${{ inputs.duration }}"
-          $t = 300; $disp = "5 giá»"
-          if ($d -eq "1h") { $t = 60; $disp = "1 giá»" }
-          if ($d -eq "3h") { $t = 180; $disp = "3 giá»" }
+          $t = 300; $disp = "5 giÃ¡Â»Â"
+          if ($d -eq "1h") { $t = 60; $disp = "1 giÃ¡Â»Â" }
+          if ($d -eq "3h") { $t = 180; $disp = "3 giÃ¡Â»Â" }
           "TOTAL_MINUTES=$t" >> "$env:GITHUB_ENV"
           "DISPLAY_TIME=$disp" >> "$env:GITHUB_ENV"
           
@@ -101,7 +101,7 @@ jobs:
           $dl = (("$env:DRIVE_LETTER").Trim() -replace "[^A-Za-z]", "").ToUpper()
           if ((-not "$dl") -or ("$dl" -in @("C","D"))) { $dl = "X" }
           "MOUNT_LETTER=$dl" >> "$env:GITHUB_ENV"
-          # FIX: Set $env trá»±c tiáº¿p trÆ°á»›c khi dÃ¹ng
+          # FIX: Set $env trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p trÃ†Â°Ã¡Â»â€ºc khi dÃƒÂ¹ng
           $relTag = "zenova-storage-$cid"
           $env:RELEASE_TAG = $relTag
           "RELEASE_TAG=$relTag" >> "$env:GITHUB_ENV"
@@ -113,10 +113,10 @@ jobs:
           if (($LASTEXITCODE) -ne 0) {
               $dummy = "$env:RUNNER_TEMP\init.txt"
               Set-Content "$dummy" "Zenova for $cid | SID: $sid | Owner: $env:OWNER_DISCORD_ID" -Encoding UTF8
-              Write-Host "Táº¡o release: $relTag..." -ForegroundColor Yellow
+              Write-Host "TÃ¡ÂºÂ¡o release: $relTag..." -ForegroundColor Yellow
               gh release create "$relTag" "$dummy" --repo "$env:GH_REPO" --title "Zenova ($cid)" --notes "Owner: $env:OWNER_DISCORD_ID"
               if (($LASTEXITCODE) -ne 0) {
-                  Write-Host "Create release FAIL â€” exit code: $LASTEXITCODE" -ForegroundColor Red
+                  Write-Host "Create release FAIL Ã¢â‚¬â€ exit code: $LASTEXITCODE" -ForegroundColor Red
                   exit 1
               }
               Write-Host "Release created: $relTag" -ForegroundColor Green
