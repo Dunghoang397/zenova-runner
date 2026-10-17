@@ -1,4 +1,5 @@
-// ZENOVA SHOP - GitHub API v17 ULTRA FAST
+// ZENOVA - GitHub API v19
+// FIX 5%: API asset endpoint + workflow log fallback + partialReady accept
 import { Octokit } from '@octokit/rest';
 import { logger } from './logger.js';
 
@@ -11,7 +12,7 @@ const cfg = {
 
 export const octokit = new Octokit({
   auth: process.env.GH_TOKEN,
-  userAgent: 'zenova-shop-bot/17.0'
+  userAgent: 'zenova-bot/19.0'
 });
 
 const tag = (id) => `zenova-storage-${id}`;
@@ -23,7 +24,7 @@ async function ghApi(path, options = {}) {
     'Accept': 'application/vnd.github+json',
     'Authorization': 'Bearer ' + process.env.GH_TOKEN,
     'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'zenova-shop-bot/17.0',
+    'User-Agent': 'zenova-bot/19.0',
     'Cache-Control': 'no-cache',
     ...(options.headers || {})
   };
@@ -38,7 +39,7 @@ async function ghApi(path, options = {}) {
 
 export async function dispatchCreate(inputs) {
   if (!/^[a-z0-9\-]+$/.test(inputs.machine_id)) {
-    throw new Error('Machine ID only a-z, 0-9, dash');
+    throw new Error('Machine ID: a-z, 0-9, dash only');
   }
   logger.cmd('Dispatch: ' + inputs.machine_id);
   await ghApi(
@@ -66,23 +67,40 @@ export async function listMachines() {
     }));
 }
 
+// ═══════════════════════════════════════════════════════════════
+// CHIẾN LƯỢC 1: ĐỌC STATE QUA API ASSET ENDPOINT (KHÔNG CACHE)
+// ═══════════════════════════════════════════════════════════════
 export async function getStateJson(machineId) {
   try {
     const rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
     const stateAsset = rel.assets.find(a => a.name === 'state.json');
     if (!stateAsset) return null;
-    const url = stateAsset.browser_download_url + '?t=' + Date.now() + '&r=' + Math.random();
-    const res = await fetch(url, {
-      headers: {
-        'Authorization': 'Bearer ' + process.env.GH_TOKEN,
-        'Cache-Control': 'no-cache, no-store',
-        'Pragma': 'no-cache'
-      },
-      cache: 'no-store'
-    });
-    if (!res.ok) return null;
+
+    // Đọc qua API asset endpoint — KHÔNG CACHE
+    const res = await fetch(
+      'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/releases/assets/' + stateAsset.id,
+      {
+        headers: {
+          'Authorization': 'Bearer ' + process.env.GH_TOKEN,
+          'Accept': 'application/octet-stream',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'zenova-bot/19.0',
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
+        },
+        redirect: 'follow',
+        cache: 'no-store'
+      }
+    );
+
+    if (!res.ok) {
+      logger.dbg('Asset fetch fail: ' + res.status);
+      return null;
+    }
+
     const data = await res.json();
     data._fetchedAt = Date.now();
+    data._assetId = stateAsset.id;
+    data._assetUpdatedAt = stateAsset.updated_at;
     return data;
   } catch (e) {
     logger.dbg('getStateJson: ' + e.message);
@@ -90,15 +108,122 @@ export async function getStateJson(machineId) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// CHIẾN LƯỢC 2: PARSE STATE TỪ WORKFLOW RUN LOG
+// ═══════════════════════════════════════════════════════════════
+async function getStateFromRunLog(machineId) {
+  try {
+    const runs = await listRecentRuns(5);
+    if (!runs.length) return null;
+
+    // Tìm run có display_title chứa machineId (nếu có)
+    // Fallback: dùng run mới nhất
+    let targetRun = runs[0];
+    for (const r of runs) {
+      const title = r.display_title || '';
+      if (title.toLowerCase().includes(machineId.toLowerCase())) {
+        targetRun = r;
+        break;
+      }
+    }
+
+    const logTail = await getRunLogTail(targetRun.id, 800);
+    if (!logTail || logTail === '(no log)') return null;
+
+    // Parse Tailscale IP (100.x.x.x)
+    const ipMatch = logTail.match(/(?:Tailscale IP|IP Tailscale|IP)\s*[:=]\s*(100\.\d+\.\d+\.\d+)/i)
+      || logTail.match(/\b(100\.\d+\.\d+\.\d+)\b/);
+    if (!ipMatch) return null;
+    const ip = ipMatch[1];
+
+    // Parse user
+    const userMatch = logTail.match(/(?:RDP_USER|User)\s*[:=]\s*(\w+)/i)
+      || logTail.match(/user\s*[:=]\s*(\w+)/i);
+    const user = userMatch ? userMatch[1] : 'runneradmin';
+
+    // Parse password (nếu có trong log — nhưng thường bị mask)
+    const passMatch = logTail.match(/(?:RDP_PASS|Pass)\s*[:=]\s*(\S+)/i)
+      || logTail.match(/Pass\s*[:=]\s*(\S+)/i);
+    let pass = passMatch ? passMatch[1] : '(secret)';
+    // Nếu pass bị mask thành ***
+    if (pass.includes('*') || pass === '***') pass = '(secret)';
+
+    // Parse OS build
+    const osMatch = logTail.match(/(?:OS Build|OS_BUILD)\s*[:=]\s*(\d+)/i);
+    const osBuild = osMatch ? osMatch[1] : '?';
+
+    // Parse Windows image
+    const imgMatch = logTail.match(/(?:Windows|windows_image)\s*[:=]\s*(windows-\d+)/i);
+    const windowsImage = imgMatch ? imgMatch[1] : 'windows-2025';
+
+    // Verify ready signals
+    const isReady = /SAN SANG KET NOI|READY|Ready|Ready to connect/i.test(logTail);
+    if (!isReady) return null;
+
+    logger.info('State from log: ' + machineId + ' | IP: ' + ip + ' | User: ' + user);
+
+    return {
+      machineId,
+      ownerDiscordId: null,
+      user,
+      password: pass,
+      tailscaleIp: ip,
+      osBuild,
+      windowsImage,
+      windowsMode: 'lite',
+      status: 'ready',
+      step: 'ready',
+      ready: true,
+      partialReady: true,
+      _fromLog: true,
+      _runId: targetRun.id,
+      _fetchedAt: Date.now()
+    };
+  } catch (e) {
+    logger.dbg('getStateFromRunLog: ' + e.message);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HÀM CHÍNH: LẤY STATE VỚI NHIỀU CHIẾN LƯỢC FALLBACK
+// ═══════════════════════════════════════════════════════════════
+export async function getStateWithFallback(machineId) {
+  // 1. Thử API asset (không cache)
+  let state = await getStateJson(machineId);
+
+  // 2. Nếu state đủ thông tin (IP + user + pass) → dùng luôn
+  if (state && state.tailscaleIp && state.tailscaleIp !== '?'
+      && state.user && state.user !== '?'
+      && state.password && state.password !== '?') {
+    return state;
+  }
+
+  // 3. Nếu state không đủ → fallback log
+  const logState = await getStateFromRunLog(machineId);
+  if (logState) {
+    // Merge: giữ owner từ state nếu có
+    if (state?.ownerDiscordId) logState.ownerDiscordId = state.ownerDiscordId;
+    if (state?.duckdnsHost) logState.duckdnsHost = state.duckdnsHost;
+    if (state?.durationMinutes) logState.durationMinutes = state.durationMinutes;
+    if (state?.startUtc) logState.startUtc = state.startUtc;
+    return logState;
+  }
+
+  // 4. Trả state raw (có thể chỉ có IP chưa có pass)
+  return state;
+}
+
 export async function getManifest(machineId) {
-  return getStateJson(machineId);
+  return getStateWithFallback(machineId);
 }
 
 export async function getUserMachine(discordUserId) {
   const machines = await listMachines();
   for (const m of machines.slice(0, 30)) {
-    const state = await getStateJson(m.id);
-    if (state?.ownerDiscordId === discordUserId && state?.ready) {
+    const state = await getStateWithFallback(m.id);
+    if (!state) continue;
+    if (state.ownerDiscordId === discordUserId) {
       return { ...m, manifest: state };
     }
   }
@@ -108,6 +233,7 @@ export async function getUserMachine(discordUserId) {
 export async function isMachineOwner(discordUserId, machineId) {
   const state = await getStateJson(machineId);
   if (!state) return false;
+  if (!state.ownerDiscordId) return true;
   return state.ownerDiscordId === discordUserId;
 }
 
@@ -122,7 +248,8 @@ export async function listActiveRuns() {
       number: r.run_number,
       status: r.status,
       started: r.run_started_at || r.created_at,
-      url: r.html_url
+      url: r.html_url,
+      display_title: r.display_title || ''
     }));
 }
 
@@ -137,14 +264,18 @@ export async function listRecentRuns(limit = 20) {
     conclusion: r.conclusion,
     started: r.run_started_at || r.created_at,
     updated: r.updated_at,
-    url: r.html_url
+    url: r.html_url,
+    event: r.event,
+    display_title: r.display_title || ''
   }));
 }
 
-// ═══ POLL 2.5S (SIÊU NHANH) ═══
-export async function waitForWorkflowCompletion(machineId, maxWaitMs = 900000, intervalMs = 2500, onProgress = null) {
+// ═══════════════════════════════════════════════════════════════
+// POLL — CHẤP NHẬN NHIỀU MỨC READY
+// ═══════════════════════════════════════════════════════════════
+export async function waitForWorkflowCompletion(machineId, maxWaitMs = 900000, intervalMs = 2000, onProgress = null) {
   const startTime = Date.now();
-  logger.info('Poll state.json (2.5s): ' + machineId);
+  logger.info('Poll state (2s, API+log): ' + machineId);
 
   await new Promise(r => setTimeout(r, 3000));
 
@@ -156,21 +287,28 @@ export async function waitForWorkflowCompletion(machineId, maxWaitMs = 900000, i
   while (Date.now() - startTime < maxWaitMs) {
     attempt++;
     try {
-      const state = await getStateJson(machineId);
+      const state = await getStateWithFallback(machineId);
 
-      if (state?.tailscaleIp && state.tailscaleIp !== '?') bestState = state;
+      if (state && state.tailscaleIp && state.tailscaleIp !== '?') {
+        bestState = state;
+      }
 
       if (onProgress) {
         try { await onProgress({ attempt, maxAttempts, state, elapsed: Date.now() - startTime }); } catch {}
       }
 
-      if (state && state.ready === true && state.tailscaleIp && state.tailscaleIp !== '?') {
+      // MỨC 1: ready + IP + user (đủ để kết nối)
+      if (state && state.tailscaleIp && state.tailscaleIp !== '?'
+          && state.user && state.user !== '?') {
         logger.ok('READY (' + attempt + ', ' + Math.round((Date.now() - startTime) / 1000) + 's)');
-        return { success: true, manifest: state, attempts: attempt, elapsed: Date.now() - startTime };
+        return { success: true, manifest: state, attempts: attempt, elapsed: Date.now() - startTime, fromLog: state._fromLog || false };
       }
 
-      if (attempt - lastLogAt >= 25) {
-        logger.info('Poll ' + attempt + '/' + maxAttempts + ' | ' + (state?.step || 'waiting') + ' | ' + Math.round((Date.now() - startTime) / 1000) + 's');
+      if (attempt - lastLogAt >= 20) {
+        const s = state?.status || 'none';
+        const step = state?.step || '-';
+        const hasIp = state?.tailscaleIp && state.tailscaleIp !== '?' ? 'YES' : 'NO';
+        logger.info('Poll ' + attempt + '/' + maxAttempts + ' | step:' + step + ' | IP:' + hasIp + ' | ' + Math.round((Date.now() - startTime) / 1000) + 's');
         lastLogAt = attempt;
       }
     } catch (e) {
@@ -180,11 +318,70 @@ export async function waitForWorkflowCompletion(machineId, maxWaitMs = 900000, i
   }
 
   if (bestState) {
-    logger.warn('TIMEOUT but have state with IP');
+    logger.warn('TIMEOUT but have IP state');
     return { success: true, manifest: bestState, attempts: attempt, elapsed: Date.now() - startTime, fallback: true };
   }
 
   return { success: false, error: 'Timeout ' + (maxWaitMs / 1000) + 's', lastState: bestState };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TRANSFER MACHINE
+// ═══════════════════════════════════════════════════════════════
+export async function transferOwnership(machineId, newOwnerId, requesterId, isAdmin = false) {
+  const state = await getStateJson(machineId);
+  if (!state) throw new Error('Machine not found: ' + machineId);
+
+  if (!isAdmin) {
+    if (state.ownerDiscordId && state.ownerDiscordId !== requesterId) {
+      throw new Error('You are not the owner');
+    }
+  }
+
+  if (state.ownerDiscordId === newOwnerId) {
+    throw new Error('Already belongs to this user');
+  }
+
+  const newState = {
+    ...state,
+    ownerDiscordId: newOwnerId,
+    previousOwnerId: state.ownerDiscordId || null,
+    transferredUtc: new Date().toISOString(),
+    transferredBy: requesterId
+  };
+
+  // Remove internal fields
+  delete newState._fetchedAt;
+  delete newState._assetId;
+  delete newState._assetUpdatedAt;
+  delete newState._fromLog;
+  delete newState._runId;
+
+  const rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
+  const stateAsset = rel.assets.find(a => a.name === 'state.json');
+  if (!stateAsset) throw new Error('state.json missing');
+
+  await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/assets/' + stateAsset.id, { method: 'DELETE' });
+
+  const uploadUrl = rel.upload_url.replace(/\{.*\}/, '') + '?name=state.json';
+  const jsonStr = JSON.stringify(newState, null, 2);
+  const res = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + process.env.GH_TOKEN,
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    },
+    body: jsonStr
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error('Upload fail: HTTP ' + res.status + ' ' + txt.slice(0, 200));
+  }
+
+  logger.ok(`Transferred ${machineId}: ${state.ownerDiscordId} -> ${newOwnerId}`);
+  return { success: true, machineId, previousOwner: state.ownerDiscordId || null, newOwner: newOwnerId, state: newState };
 }
 
 export async function deleteMachine(machineId, requesterId, isAdmin = false) {
@@ -233,11 +430,13 @@ export async function getRunLogTail(runId, lines = 80) {
         );
         if (res.ok) {
           const txt = await res.text();
-          logs.push('=== ' + job.name + ' (' + job.status + ') ===\n' + txt.split('\n').slice(-lines).join('\n'));
+          logs.push(txt);
         }
       } catch (e) {}
     }
-    return logs.join('\n\n') || '(no log)';
+    const fullLog = logs.join('\n');
+    // Trả về N dòng cuối
+    return fullLog.split('\n').slice(-lines).join('\n');
   } catch (e) {
     return 'Error: ' + e.message;
   }

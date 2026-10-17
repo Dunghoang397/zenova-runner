@@ -8,7 +8,6 @@ export default {
 
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
-
     const admin = isAdmin(interaction);
     const mod = isMod(interaction);
     const member = isMember(interaction);
@@ -20,19 +19,12 @@ export default {
     else if (member) { roleText = 'AI-STV Member'; color = COLORS.success; }
 
     const embed = new EmbedBuilder()
-      .setTitle('ZENOVA SHOP v17 - HELP')
+      .setTitle('ZENOVA SHOP v19 - HELP')
       .setColor(color)
       .setThumbnail(interaction.client.user.displayAvatarURL())
-      .setDescription(
-        '```\n' +
-        '+----------------------------------------------+\n' +
-        '|          ZENOVA SHOP  -  HELP v17            |\n' +
-        '+----------------------------------------------+\n' +
-        '```\n' +
-        '**Your role:** ' + roleText
-      )
+      .setDescription('```\n+----------------------------------------------+\n|          ZENOVA SHOP  -  HELP v19            |\n+----------------------------------------------+\n```\n**Your role:** ' + roleText)
       .setTimestamp()
-      .setFooter({ text: 'Zenova Shop v17 ULTRA' });
+      .setFooter({ text: 'Zenova Shop v19 ULTRA' });
 
     embed.addFields({
       name: 'For Everyone',
@@ -40,7 +32,7 @@ export default {
         '**Utility:** `/help` `/ping` `/uptime` `/botinfo` `/serverinfo` `/serverstats`',
         '**Info:** `/userinfo` `/roleinfo` `/channelinfo`',
         '**Fun:** `/fun` `/dice` `/coinflip` `/8ball` `/avatar` `/poll` `/meme` `/quote` `/cat` `/dog` `/joke` `/fact`',
-        '**Social (with GIF):** `/hug` `/kiss` `/slap` `/pat` `/ship`',
+        '**Social (GIF):** `/hug` `/kiss` `/slap` `/pat` `/ship`',
         '**Tool:** `/weather` `/shorturl`',
         '**Economy:** `/daily` `/work` `/balance` `/pay` `/gamble` `/leaderboard`',
         '**XP:** `/top` `/rank`'
@@ -51,7 +43,7 @@ export default {
     if (member) {
       embed.addFields({
         name: 'AI-STV Member',
-        value: '**VM:** `/create` `/delete` `/info`',
+        value: '**VM:** `/create` `/delete` `/info` `/transfer`',
         inline: false
       });
     }
