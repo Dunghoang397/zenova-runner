@@ -1,19 +1,19 @@
-// ZENOVA SHOP - /danhsach
+// ZENOVA - /list
 import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { listMachines, listActiveRuns } from '../lib/github.js';
-import { COLORS, formatBytes, timeAgo, machineStatusEmoji } from '../ui/embeds.js';
+import { COLORS, formatBytes, timeAgo } from '../ui/embeds.js';
 import { isAdmin } from '../lib/security.js';
 
 export default {
   data: new SlashCommandBuilder()
-    .setName('danhsach')
-    .setDescription('[ADMIN] Danh sach toan bo may'),
+    .setName('list')
+    .setDescription('[ADMIN] List all machines'),
 
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
     if (!isAdmin(interaction)) {
       return interaction.editReply({
-        embeds: [{ color: COLORS.danger, title: 'Chi Admin', description: 'Can role **AI-STV Admin**.' }]
+        embeds: [{ color: COLORS.danger, title: 'Admin Only', description: 'Need **AI-STV Admin** role.' }]
       });
     }
     await showList(interaction);
@@ -23,7 +23,7 @@ export default {
     await interaction.deferUpdate();
     if (!isAdmin(interaction)) {
       return interaction.editReply({
-        embeds: [{ color: COLORS.danger, title: 'Chi Admin', description: 'Khong co quyen.' }],
+        embeds: [{ color: COLORS.danger, title: 'Admin Only', description: 'No permission.' }],
         components: []
       });
     }
@@ -38,39 +38,37 @@ async function showList(interaction) {
     const [machines, runs] = await Promise.all([listMachines(), listActiveRuns()]);
 
     const embed = new EmbedBuilder()
-      .setTitle('ZENOVA - DANH SACH MAY')
+      .setTitle('ALL MACHINES')
       .setColor(COLORS.primary)
       .setTimestamp()
-      .setFooter({ text: 'Zenova Shop | Admin Panel' });
+      .setFooter({ text: 'Zenova v17 | Admin Panel' });
 
     const desc = [];
     if (runs.length) {
-      desc.push('**Dang chay: ' + runs.length + '**');
+      desc.push('**Running: ' + runs.length + '**');
       runs.slice(0, 8).forEach(r => {
-        desc.push(machineStatusEmoji(r.status) + ' `Run #' + r.number + '` - [log](' + r.url + ')');
+        desc.push('\uD83D\uDD25 `Run #' + r.number + '` - [log](' + r.url + ')');
       });
     }
     if (machines.length) {
       desc.push('');
-      desc.push('**Co backup: ' + machines.length + '**');
+      desc.push('**With backup: ' + machines.length + '**');
       machines.slice(0, 10).forEach(m => {
-        desc.push('PC `' + m.id + '` - ' + m.chunks + ' chunks (' + formatBytes(m.totalSize) + ') - ' + timeAgo(m.updated));
+        desc.push('\uD83D\uDCBE `' + m.id + '` - ' + timeAgo(m.updated));
       });
     }
-    if (!runs.length && !machines.length) desc.push('Chua co may nao.');
+    if (!runs.length && !machines.length) desc.push('No machines.');
 
     embed.setDescription(desc.join('\n'));
 
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('danhsach:refresh').setLabel('Refresh').setEmoji('🔄').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('stop:manage').setLabel('Quan ly stop').setEmoji('🛑').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId('status:view').setLabel('Status').setEmoji('📊').setStyle(ButtonStyle.Primary)
+      new ButtonBuilder().setCustomId('list:refresh').setLabel('Refresh').setStyle(ButtonStyle.Secondary)
     );
 
     await interaction.editReply({ embeds: [embed], components: [row] });
   } catch (e) {
     await interaction.editReply({
-      embeds: [{ color: COLORS.danger, title: 'Loi', description: '`' + e.message + '`' }],
+      embeds: [{ color: COLORS.danger, title: 'Error', description: '`' + e.message + '`' }],
       components: []
     });
   }

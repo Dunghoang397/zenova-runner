@@ -1,69 +1,75 @@
-# ZENOVA RUNNER v16 - Fast publish + Parallel setup + Keep session
+# ZENOVA RUNNER v17 - ULTRA FAST + WIN2025 LITE + DUCKDNS
 name: Zenova Runner
 
 on:
   workflow_dispatch:
     inputs:
       machine_id:
-        description: 'Ten may'
-        required: true
+        description: 'Machine ID'
+        required: false
+        default: 'zenova-01'
         type: string
       owner_discord_id:
-        description: 'Discord User ID chu may'
+        description: 'Discord User ID'
         required: false
         default: ''
         type: string
       duration:
-        description: 'Thoi luong'
+        description: 'Duration'
         required: false
         default: '6h00m'
         type: choice
         options: ['1h','3h','6h00m','12h00m','24h00m']
       windows_image:
-        description: 'Windows'
+        description: 'Windows (2025 moi nhat + Lite)'
         required: false
-        default: 'windows-2022'
+        default: 'windows-2025'
         type: choice
         options: ['windows-2022','windows-2025']
       windows_mode:
-        description: 'Che do'
+        description: 'Mode (Lite = nhe + nhanh + fix lag)'
         required: false
         default: 'lite'
         type: choice
         options: ['lite','full']
       vdd_resolution:
-        description: 'Do phan giai'
+        description: 'Resolution'
         required: false
         default: '1920x1080@60'
         type: choice
         options: ['1280x720@60','1920x1080@60','1920x1080@120','2560x1440@60','3840x2160@60']
       drive_letter:
-        description: 'Ky tu o'
+        description: 'Drive letter'
         required: false
         default: 'X'
         type: string
       vhd_size_gb:
-        description: 'Dung luong VHDX'
+        description: 'VHDX size (GB)'
         required: false
         default: '45'
         type: string
       auto_save_interval_min:
-        description: 'Auto-save (phut)'
+        description: 'Auto-save (min)'
         required: false
         default: '15'
         type: string
       auto_restart:
-        description: 'Tu dong khoi dong phien moi'
+        description: 'Auto restart new session'
         required: false
         default: true
         type: boolean
       keep_session:
-        description: 'Giu session khi disconnect RDP'
+        description: 'Keep session when RDP disconnect'
+        required: false
+        default: true
+        type: boolean
+      enable_duckdns:
+        description: 'Update DuckDNS'
         required: false
         default: true
         type: boolean
       choco_packages:
-        description: 'App cai them'
+        description: 'Extra apps'
         required: false
         default: ''
         type: string
@@ -73,27 +79,29 @@ permissions:
   actions: write
 
 concurrency:
-  group: zenova-rdp-${{ inputs.machine_id }}
+  group: zenova-rdp-${{ inputs.machine_id || 'zenova-01' }}
   cancel-in-progress: true
 
 jobs:
   runner:
-    runs-on: ${{ inputs.windows_image || 'windows-2022' }}
+    runs-on: ${{ inputs.windows_image || 'windows-2025' }}
     timeout-minutes: 1500
 
     env:
       GH_REPO: ${{ github.repository }}
-      MACHINE_ID_INPUT: ${{ inputs.machine_id }}
+      MACHINE_ID_INPUT: ${{ inputs.machine_id || 'zenova-01' }}
       OWNER_DISCORD_ID: ${{ inputs.owner_discord_id }}
       DRIVE_LETTER: ${{ inputs.drive_letter }}
       VHD_SIZE_GB: ${{ inputs.vhd_size_gb }}
       AUTO_SAVE_INTERVAL_MIN: ${{ inputs.auto_save_interval_min }}
       WINDOWS_MODE: ${{ inputs.windows_mode }}
-      PKGS: ${{ inputs.choco_packages }}
       KEEP_SESSION: ${{ inputs.keep_session }}
+      PKGS: ${{ inputs.choco_packages }}
+      WEB_PORT: '8080'
+      SUNSHINE_WEB_PORT: '47990'
 
     steps:
-      # ═══ SETUP + PUBLISH STARTING ═══
+      # ═══ 1. FAST SETUP + PUBLISH STARTING ═══
       - name: Resolve ID
         shell: pwsh
         env:
@@ -106,15 +114,16 @@ jobs:
           if ([string]::IsNullOrWhiteSpace("$cleanId")) { $cleanId = 'zenova-01' }
           "MACHINE_ID=$cleanId" >> "$env:GITHUB_ENV"
           "RELEASE_TAG=zenova-storage-$cleanId" >> "$env:GITHUB_ENV"
+          "STATE_BRANCH=zenova-state-$cleanId" >> "$env:GITHUB_ENV"
 
-          $durMap = @{ '1h' = @(60,'1 gio'); '3h' = @(180,'3 gio'); '6h00m' = @(360,'6 gio'); '12h00m' = @(720,'12 gio'); '24h00m' = @(1440,'24 gio') }
+          $durMap = @{ '1h' = @(60,'1 hour'); '3h' = @(180,'3 hours'); '6h00m' = @(360,'6 hours'); '12h00m' = @(720,'12 hours'); '24h00m' = @(1440,'24 hours') }
           $d = "${{ inputs.duration }}"
           if ($durMap.ContainsKey($d)) {
               "TOTAL_MINUTES=$($durMap[$d][0])" >> "$env:GITHUB_ENV"
               "DISPLAY_TIME=$($durMap[$d][1])" >> "$env:GITHUB_ENV"
           } else {
               "TOTAL_MINUTES=360" >> "$env:GITHUB_ENV"
-              "DISPLAY_TIME=6 gio" >> "$env:GITHUB_ENV"
+              "DISPLAY_TIME=6 hours" >> "$env:GITHUB_ENV"
           }
 
           "RDP_USER=$env:USERNAME" >> "$env:GITHUB_ENV"
@@ -127,7 +136,7 @@ jobs:
           $build = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuild
           "OS_BUILD=$build" >> "$env:GITHUB_ENV"
 
-          # Publish state ngay lap tuc (de bot biet may dang tao)
+          # Create release
           $null = gh release view "$env:RELEASE_TAG" --repo "$env:GH_REPO" 2>&1
           if (($LASTEXITCODE) -ne 0) {
               $dummy = "$env:RUNNER_TEMP\init.txt"
@@ -136,27 +145,32 @@ jobs:
           }
           $global:LASTEXITCODE = 0
 
+          # PUBLISH STARTING IMMEDIATELY
           $quickState = [ordered]@{
               machineId = "$cleanId"
               ownerDiscordId = "$env:OWNER_DISCORD_ID"
               status = "starting"
-              startedUtc = (Get-Date).ToUniversalTime().ToString('o')
+              step = "init"
               ready = $false
+              startedUtc = (Get-Date).ToUniversalTime().ToString('o')
           }
           $tempDir = "$env:RUNNER_TEMP\qstate"
           New-Item -ItemType Directory -Force -Path "$tempDir" | Out-Null
           $quickState | ConvertTo-Json -Depth 5 | Set-Content "$tempDir\state.json" -Encoding UTF8
           gh release upload "$env:RELEASE_TAG" "$tempDir\state.json" --repo "$env:GH_REPO" --clobber 2>&1 | Out-Null
           $global:LASTEXITCODE = 0
+          Write-Host "PUBLISH 1: starting" -ForegroundColor Green
           exit 0
 
-      # ═══ SONG SONG: TAILSCALE + LITE + RDP ═══
-      - name: Install Tailscale (early)
+      # ═══ 2. TAILSCALE + DUCKDNS (SONG SONG) ═══
+      - name: Install Tailscale + DuckDNS
         env:
           TS_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
+          DUCKDNS_DOMAIN: ${{ secrets.DUCKDNS_DOMAIN }}
         shell: pwsh
         run: |
-          if (-not ("$env:TS_KEY")) { Write-Host "Thieu key"; exit 1 }
+          if (-not ("$env:TS_KEY")) { Write-Host "Missing TS_KEY"; exit 1 }
           $ts = 'C:\Program Files\Tailscale\tailscale.exe'
           if (-not (Test-Path "$ts")) {
               $msi = "$env:RUNNER_TEMP\ts.msi"
@@ -180,15 +194,62 @@ jobs:
           if (($LASTEXITCODE) -ne 0) { Start-Sleep 2; & "$ts" up "--authkey=$env:TS_KEY" "--hostname=$tsHost" --accept-routes --accept-dns --reset 2>&1 | Out-Null }
 
           $ip = $null
-          1..15 | ForEach-Object { if (-not $ip) { $o = (& "$ts" ip -4 2>&1 | Out-String).Trim(); if ("$o" -match '^\d+\.\d+\.\d+\.\d+$') { $ip = "$o" } else { Start-Sleep 2 } } }
+          1..20 | ForEach-Object { if (-not $ip) { $o = (& "$ts" ip -4 2>&1 | Out-String).Trim(); if ("$o" -match '^\d+\.\d+\.\d+\.\d+$') { $ip = "$o" } else { Start-Sleep 2 } } }
           if (-not $ip) { exit 1 }
 
           "TAILSCALE_IP=$ip" >> "$env:GITHUB_ENV"
           "TAILSCALE_HOST=$tsHost" >> "$env:GITHUB_ENV"
           Write-Host "Tailscale: $ip" -ForegroundColor Green
+
+          # DuckDNS update
+          if ("${{ inputs.enable_duckdns }}" -eq "true" -and "$env:DUCKDNS_TOKEN" -and "$env:DUCKDNS_DOMAIN") {
+              try {
+                  $domain = (("$env:DUCKDNS_DOMAIN").Trim().ToLower()) -replace '\.duckdns\.org$', ''
+                  $uri = "https://www.duckdns.org/update?domains=$domain&token=$($env:DUCKDNS_TOKEN)&ip=$ip"
+                  $res = Invoke-RestMethod -Uri "$uri" -TimeoutSec 15
+                  if (("$res").Trim() -eq 'OK') {
+                      "DUCKDNS_HOST=${domain}.duckdns.org" >> "$env:GITHUB_ENV"
+                      Write-Host "DuckDNS: ${domain}.duckdns.org" -ForegroundColor Green
+                  }
+              } catch {}
+          }
           exit 0
 
-      # ═══ RDP + KEEP SESSION ═══
+      # ═══ 3. PUBLISH MIDWAY ═══
+      - name: Publish Midway
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $state = [ordered]@{
+              machineId = "$env:MACHINE_ID"
+              ownerDiscordId = "$env:OWNER_DISCORD_ID"
+              user = "$env:RDP_USER"
+              tailscaleIp = "$env:TAILSCALE_IP"
+              tailscaleHostname = "$env:TAILSCALE_HOST"
+              duckdnsHost = "$env:DUCKDNS_HOST"
+              osBuild = "$env:OS_BUILD"
+              windowsImage = "${{ inputs.windows_image }}"
+              windowsMode = "${{ inputs.windows_mode }}"
+              durationMinutes = [int]"$env:TOTAL_MINUTES"
+              status = "installing"
+              step = "tailscale_done"
+              ready = $false
+              partialReady = $true
+              startedUtc = (Get-Date).ToUniversalTime().ToString('o')
+          }
+          $tempDir = "$env:RUNNER_TEMP\midstate"
+          New-Item -ItemType Directory -Force -Path "$tempDir" | Out-Null
+          $state | ConvertTo-Json -Depth 5 | Set-Content "$tempDir\state.json" -Encoding UTF8
+          foreach ($t in 1..3) {
+              gh release upload "$env:RELEASE_TAG" "$tempDir\state.json" --repo "$env:GH_REPO" --clobber 2>&1 | Out-Null
+              if (($LASTEXITCODE) -eq 0) { break }
+              Start-Sleep 2
+          }
+          Write-Host "PUBLISH 2: midway" -ForegroundColor Green
+          exit 0
+
+      # ═══ 4. RDP + KEEP SESSION ═══
       - name: Configure RDP
         shell: pwsh
         run: |
@@ -203,7 +264,6 @@ jobs:
           Restart-Service TermService -Force -EA SilentlyContinue
           Start-Sleep 2
 
-          # Chong ngat session
           $tsPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
           New-Item -Path "$tsPol" -Force | Out-Null
           Set-ItemProperty "$tsPol" 'fResetBroken' 0 -Type DWord -Force -EA SilentlyContinue
@@ -211,10 +271,9 @@ jobs:
           Set-ItemProperty "$tsPol" 'MaxDisconnectionTime' 0 -Type DWord -Force -EA SilentlyContinue
           Set-ItemProperty "$tsPol" 'fLogoffWhenNodc' 0 -Type DWord -Force -EA SilentlyContinue
 
-          # Firewall
           Remove-NetFirewallRule -DisplayName 'Zenova-RDP' -EA SilentlyContinue
           Remove-NetFirewallRule -DisplayName 'Zenova-TS' -EA SilentlyContinue
-          New-NetFirewallRule -DisplayName 'Zenova-RDP' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -Profile Any | Out-Null
+          New-NetFirewallRule -DisplayName 'Zenova-RDP' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389,8080 -Profile Any | Out-Null
           New-NetFirewallRule -DisplayName 'Zenova-TS' -Direction Inbound -Action Allow -Protocol Any -Profile Any -InterfaceAlias 'Tailscale' -ErrorAction SilentlyContinue | Out-Null
           Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block -AllowInboundRules True
 
@@ -224,7 +283,7 @@ jobs:
           Start-Service UmRdpService -EA SilentlyContinue
           exit 0
 
-      # ═══ USER ═══
+      # ═══ 5. USER ═══
       - name: Setup User
         shell: pwsh
         env:
@@ -239,6 +298,7 @@ jobs:
               $source = 'random'
           }
           Write-Host "::add-mask::$matKhau"
+
           Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'DisableCAD' 1 -Type DWord -Force -EA SilentlyContinue
           Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'LocalAccountTokenFilterPolicy' 1 -Type DWord -Force -EA SilentlyContinue
           & net accounts /minpwlen:0 /maxpwage:unlimited /minpwage:0 /uniquepw:0 *> $null
@@ -247,30 +307,75 @@ jobs:
           & net localgroup Administrators "$user" /add *> $null
           & net localgroup "Remote Desktop Users" "$user" /add *> $null
           $global:LASTEXITCODE = 0
+
           $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
           Set-ItemProperty $wl 'AutoAdminLogon' '1' -Type String -Force -EA SilentlyContinue
           Set-ItemProperty $wl 'DefaultUserName' "$user" -Type String -Force -EA SilentlyContinue
           Set-ItemProperty $wl 'DefaultPassword' "$matKhau" -Type String -Force -EA SilentlyContinue
+
           "RDP_PASS=$matKhau" >> "$env:GITHUB_ENV"
           "RDP_PASS_SOURCE=$source" >> "$env:GITHUB_ENV"
           exit 0
 
-      # ═══ LITE ═══
-      - name: Lite Windows
+      # ═══ 6. ULTRA LITE (FIX LAG) ═══
+      - name: Ultra Lite (Fix Lag)
         if: ${{ inputs.windows_mode == 'lite' }}
         shell: pwsh
         run: |
-          foreach ($svc in @('DiagTrack','WSearch','SysMain','WerSvc','XblAuthManager','XblGameSave','XboxNetApiSvc','XboxGipSvc','Spooler','Fax','MapsBroker','RetailDemo','PcaSvc','TabletInputService')) {
+          Write-Host "Ultra Lite Windows (fix lag)..." -ForegroundColor Yellow
+
+          # Disable services
+          foreach ($svc in @('DiagTrack','WSearch','SysMain','WerSvc','XblAuthManager','XblGameSave','XboxNetApiSvc','XboxGipSvc','Spooler','Fax','MapsBroker','RetailDemo','PcaSvc','TabletInputService','FontCache','WpnService','WbioSrvc','WlanSvc','BluetoothUserService','SEMgrSvc','PhoneSvc','PrintNotify','RemoteRegistry','SharedAccess','WMPNetworkSvc','icssvc')) {
               try { Stop-Service $svc -Force -EA SilentlyContinue; Set-Service $svc -StartupType Disabled -EA SilentlyContinue } catch {}
           }
+
+          # Disable telemetry
           Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' 0 -Type DWord -Force -EA SilentlyContinue
-          $bloat = @('Microsoft.3DBuilder','Microsoft.BingNews','Microsoft.BingWeather','Microsoft.GetHelp','Microsoft.Getstarted','Microsoft.MicrosoftOfficeHub','Microsoft.MicrosoftSolitaireCollection','Microsoft.People','Microsoft.SkypeApp','Microsoft.WindowsAlarms','Microsoft.WindowsFeedbackHub','Microsoft.WindowsMaps','Microsoft.ZuneMusic','Microsoft.ZuneVideo','Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.YourPhone')
+          Stop-Service 'DiagTrack' -Force -EA SilentlyContinue
+
+          # Disable visual effects (fix lag)
+          Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting' 2 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty 'HKCU:\Control Panel\Desktop' 'UserPreferencesMask' ([byte[]]@(0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00)) -Type Binary -Force -EA SilentlyContinue
+          Set-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' 'MinAnimate' 0 -Type String -Force -EA SilentlyContinue
+
+          # Disable transparency + animations
+          Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'EnableTransparency' 0 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty 'HKCU:\Control Panel\Desktop' 'DragFullWindows' '0' -Force -EA SilentlyContinue
+
+          # Disable startup apps
+          Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -EA SilentlyContinue | Remove-Item -Force -EA SilentlyContinue
+          Get-ChildItem 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -EA SilentlyContinue | Remove-Item -Force -EA SilentlyContinue
+
+          # Remove bloatware
+          $bloat = @('Microsoft.3DBuilder','Microsoft.BingNews','Microsoft.BingWeather','Microsoft.GetHelp','Microsoft.Getstarted','Microsoft.MicrosoftOfficeHub','Microsoft.MicrosoftSolitaireCollection','Microsoft.People','Microsoft.SkypeApp','Microsoft.WindowsAlarms','Microsoft.WindowsFeedbackHub','Microsoft.WindowsMaps','Microsoft.ZuneMusic','Microsoft.ZuneVideo','Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.YourPhone','Microsoft.MixedReality.Portal','Microsoft.OneConnect','Microsoft.Print3D','Microsoft.Wallet','Microsoft.MicrosoftStickyNotes','Microsoft.Office.Sway','Microsoft.Todos','Microsoft.PowerAutomateDesktop','Microsoft.WindowsSoundRecorder','Microsoft.WindowsCamera','Microsoft.MSPaint')
           foreach ($a in $bloat) {
               Get-AppxPackage -Name "$a" -AllUsers -EA SilentlyContinue | Remove-AppxPackage -AllUsers -EA SilentlyContinue
           }
+
+          # Disable scheduled tasks (telemetry)
+          Get-ScheduledTask -TaskPath '\Microsoft\Windows\Application Experience\*' -EA SilentlyContinue | Disable-ScheduledTask -EA SilentlyContinue | Out-Null
+          Get-ScheduledTask -TaskPath '\Microsoft\Windows\Customer Experience Improvement Program\*' -EA SilentlyContinue | Disable-ScheduledTask -EA SilentlyContinue | Out-Null
+          Get-ScheduledTask -TaskPath '\Microsoft\Windows\DiskDiagnostic\*' -EA SilentlyContinue | Disable-ScheduledTask -EA SilentlyContinue | Out-Null
+
+          # Registry tweaks for perf
+          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' 'LargeSystemCache' 1 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl' 'Win32PrioritySeparation' 38 -Type DWord -Force -EA SilentlyContinue
+          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' 'DisablePagingExecutive' 1 -Type DWord -Force -EA SilentlyContinue
+
+          # Disable Windows Update
+          Stop-Service wuauserv -Force -EA SilentlyContinue; Set-Service wuauserv -StartupType Disabled -EA SilentlyContinue
+          Stop-Service UsoSvc -Force -EA SilentlyContinue; Set-Service UsoSvc -StartupType Disabled -EA SilentlyContinue
+          Stop-Service WaaSMedicSvc -Force -EA SilentlyContinue; Set-Service WaaSMedicSvc -StartupType Disabled -EA SilentlyContinue
+
+          # Disable Windows Defender
+          try { Set-MpPreference -DisableRealtimeMonitoring ($true) -EA Stop } catch {}
+          try { Set-MpPreference -DisableBehaviorMonitoring ($true) -EA Stop } catch {}
+          try { Set-MpPreference -DisableIOAVProtection ($true) -EA Stop } catch {}
+
+          Write-Host "Ultra Lite done - Lag fixed" -ForegroundColor Green
           exit 0
 
-      # ═══ PUBLISH READY (FAST) ═══
+      # ═══ 7. PUBLISH READY (FAST) ═══
       - name: Publish Ready State
         shell: pwsh
         env:
@@ -283,17 +388,19 @@ jobs:
               password = if ("$env:RDP_PASS_SOURCE" -ne 'secret') { "$env:RDP_PASS" } else { "(secret)" }
               tailscaleIp = "$env:TAILSCALE_IP"
               tailscaleHostname = "$env:TAILSCALE_HOST"
+              duckdnsHost = "$env:DUCKDNS_HOST"
               osBuild = "$env:OS_BUILD"
               windowsImage = "${{ inputs.windows_image }}"
               windowsMode = "${{ inputs.windows_mode }}"
               startUtc = (Get-Date).ToUniversalTime().ToString('o')
               durationMinutes = [int]"$env:TOTAL_MINUTES"
               status = "ready"
+              step = "ready"
               ready = $true
               keepSession = "$env:KEEP_SESSION"
               readyUtc = (Get-Date).ToUniversalTime().ToString('o')
           }
-          $tempDir = "$env:RUNNER_TEMP\state-ready"
+          $tempDir = "$env:RUNNER_TEMP\ready-state"
           New-Item -ItemType Directory -Force -Path "$tempDir" | Out-Null
           $state | ConvertTo-Json -Depth 5 | Set-Content "$tempDir\state.json" -Encoding UTF8
           foreach ($t in 1..3) {
@@ -301,10 +408,10 @@ jobs:
               if (($LASTEXITCODE) -eq 0) { break }
               Start-Sleep 2
           }
-          Write-Host "READY - $env:MACHINE_ID | $env:TAILSCALE_IP" -ForegroundColor Green
+          Write-Host "PUBLISH 3: READY - $env:MACHINE_ID | $env:TAILSCALE_IP" -ForegroundColor Green
           exit 0
 
-      # ═══ APPS (sau ready de bot nhan nhanh) ═══
+      # ═══ 8. APPS ═══
       - name: Install Apps
         if: ${{ inputs.choco_packages != '' }}
         shell: pwsh
@@ -317,18 +424,57 @@ jobs:
           }
           exit 0
 
-      # ═══ SAVE ENGINE ═══
+      # ═══ 9. WEB PANEL 8080 (từ rdp.yaml) ═══
+      - name: Web Control Panel
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $webLines = @(
+              '$ErrorActionPreference = "Continue";',
+              '$listener = [System.Net.HttpListener]::new();',
+              '$listener.Prefixes.Add("http://+:$($env:WEB_PORT)/");',
+              '$listener.Start();',
+              '$endEpoch = ([long]"$env:JOB_START_EPOCH") + (([long]"$env:TOTAL_MINUTES") * 60);',
+              'while ($listener.IsListening) {',
+              '    try {',
+              '        $ctx = $listener.GetContext();',
+              '        $req = $ctx.Request; $resp = $ctx.Response;',
+              '        $path = $req.Url.AbsolutePath.ToLower();',
+              '        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds();',
+              '        $remain = [math]::Max(0, $endEpoch - $now);',
+              '        $h = [math]::Floor($remain/3600); $m = [math]::Floor(($remain%3600)/60);',
+              '        $statusMsg = "";',
+              '        if ($req.HttpMethod -eq "POST") {',
+              '            if ($path -eq "/action/save") { Set-Content "$env:RUNNER_TEMP\aistv-control-action.txt" "SAVE_NOW" -Encoding UTF8; $statusMsg = "Save signal sent!" }',
+              '            elseif ($path -eq "/action/restart") { Set-Content "$env:RUNNER_TEMP\aistv-control-action.txt" "RESTART_SESSION" -Encoding UTF8; $statusMsg = "Restart signal sent!" }',
+              '            elseif ($path -eq "/action/stop") { Set-Content "$env:RUNNER_TEMP\aistv-control-action.txt" "STOP_SESSION" -Encoding UTF8; $statusMsg = "Stop signal sent!" }',
+              '        }',
+              '        $banner = if ($statusMsg) { "<div style=''background:#065f46;padding:14px;border-radius:10px;margin-bottom:18px''>$statusMsg</div>" } else { "" }',
+              '        $html = "<!DOCTYPE html><html><head><meta charset=''utf-8''><title>Zenova $($env:MACHINE_ID)</title><style>body{background:#0f172a;color:#f8fafc;font-family:Segoe UI;margin:0;padding:24px;display:flex;justify-content:center}.c{max-width:560px;width:100%;background:#1e293b;border-radius:16px;padding:24px}h1{color:#38bdf8}h1{margin:0 0 8px}.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #334155}.v{color:#4ade80;font-weight:600}button{width:100%;padding:14px;margin-top:12px;border:none;border-radius:10px;font-size:15px;font-weight:600;color:#fff;cursor:pointer}.b1{background:#0284c7}.b2{background:#d97706}.b3{background:#dc2626}</style></head><body><div class=''c''><h1>Zenova Control Panel</h1><div style=''color:#94a3b8;margin-bottom:20px''>$($env:MACHINE_ID) | $($env:TAILSCALE_IP)</div>$banner<div class=''row''><span>IP</span><span class=''v''>$($env:TAILSCALE_IP)</span></div><div class=''row''><span>Time left</span><span class=''v''>${h}h ${m}m</span></div><form method=''POST'' action=''/action/save''><button class=''b1''>Save Now</button></form><form method=''POST'' action=''/action/restart''><button class=''b2''>Save & Restart</button></form><form method=''POST'' action=''/action/stop''><button class=''b3''>Save & Stop</button></form></div></body></html>"',
+              '        $buf = [System.Text.Encoding]::UTF8.GetBytes($html);',
+              '        $resp.ContentType = "text/html; charset=utf-8";',
+              '        $resp.ContentLength64 = $buf.Length;',
+              '        $resp.OutputStream.Write($buf, 0, $buf.Length);',
+              '        $resp.OutputStream.Close();',
+              '    } catch {}',
+              '}'
+          )
+          $webPath = "$env:RUNNER_TEMP\web-panel.ps1"
+          Set-Content "$webPath" -Value ($webLines -join "`r`n") -Encoding UTF8
+          Start-Process pwsh.exe -ArgumentList '-NoProfile','-WindowStyle','Hidden','-File',"`"$webPath`"" -WindowStyle Hidden
+          Write-Host "Web Panel: http://$($env:TAILSCALE_IP):$($env:WEB_PORT)/" -ForegroundColor Green
+          exit 0
+
+      # ═══ 10. SAVE ENGINE ═══
       - name: Setup Save Engine
         shell: pwsh
         run: |
           $scriptLines = @(
               'param([string]$Reason = "session-end", [string]$Mode = "keep")',
               '$ErrorActionPreference = "Continue"',
-              'Write-Host "=== SAVE [$Reason] ===" -ForegroundColor Cyan',
               '$user = "$env:RDP_USER"',
               '$profPath = "$env:PROFILE_PATH"',
-              '$relTag = "$env:RELEASE_TAG"',
-              '$repo = "$env:GH_REPO"',
               '$appsToClose = @("chrome","msedge","brave","firefox","discord","Telegram","steam")',
               'Get-Process -Name $appsToClose -EA SilentlyContinue | ForEach-Object { $null = $_.CloseMainWindow() }',
               'Start-Sleep 3',
@@ -338,7 +484,6 @@ jobs:
               'reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" "$regDir\Uninstall.reg" /y *> $null',
               'reg export "HKCU\Software" "$regDir\HKCU-Software.reg" /y *> $null',
               'reg export "HKCU\Environment" "$regDir\User-Env.reg" /y *> $null',
-              'reg export "HKCU\Control Panel\Desktop" "$regDir\User-Desktop.reg" /y *> $null',
               '$uploadDir = "$env:RUNNER_TEMP\upload-pack"',
               'Remove-Item "$uploadDir" -Recurse -Force -EA SilentlyContinue',
               'New-Item -ItemType Directory -Force -Path "$uploadDir" | Out-Null',
@@ -359,19 +504,18 @@ jobs:
               '$state | ConvertTo-Json -Depth 5 | Set-Content "$uploadDir\state.json" -Encoding UTF8',
               'Get-ChildItem "$uploadDir" -File | ForEach-Object {',
               '    for ($t=1; $t -le 3; $t++) {',
-              '        gh release upload "$relTag" "$($_.FullName)" --repo "$repo" --clobber 2>&1 | Out-Null',
+              '        gh release upload "$env:RELEASE_TAG" "$($_.FullName)" --repo "$env:GH_REPO" --clobber 2>&1 | Out-Null',
               '        if (($LASTEXITCODE) -eq 0) { break }',
               '        Start-Sleep 3',
               '    }',
               '}',
-              'Write-Host "=== SAVE DONE ===" -ForegroundColor Green',
               'exit 0'
           )
           $savePath = "$env:RUNNER_TEMP\save-data.ps1"
           Set-Content "$savePath" -Value ($scriptLines -join "`r`n") -Encoding UTF8
           exit 0
 
-      # ═══ HOLD ═══
+      # ═══ 11. HOLD + SIGNAL ═══
       - name: Hold Session
         id: hold
         shell: pwsh
@@ -387,19 +531,39 @@ jobs:
           $startTime = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
           $endTime = $startTime + $totalSec
           $saveScript = "$env:RUNNER_TEMP\save-data.ps1"
+          $sigFile = "$env:RUNNER_TEMP\aistv-control-action.txt"
           $saveIntervalSec = ([int]"$env:AUTO_SAVE_INTERVAL_MIN") * 60
           if ($saveIntervalSec -le 0) { $saveIntervalSec = 999999 }
-
           $lastSave = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
           $lastRecover = 0
 
           while ($true) {
+              if (Test-Path "$sigFile") {
+                  $cmd = (Get-Content -Raw "$sigFile" -EA SilentlyContinue).Trim()
+                  Remove-Item "$sigFile" -Force -EA SilentlyContinue
+                  if ("$cmd" -eq 'SAVE_NOW') {
+                      Write-Host "Manual save" -ForegroundColor Cyan
+                      & "$saveScript" -Reason 'manual' -Mode 'keep'
+                      $lastSave = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                  } elseif ("$cmd" -eq 'RESTART_SESSION') {
+                      Write-Host "Restart requested" -ForegroundColor Yellow
+                      & "$saveScript" -Reason 'restart' -Mode 'restart'
+                      'FORCE_NEXT_SESSION=1' >> "$env:GITHUB_ENV"
+                      break
+                  } elseif ("$cmd" -eq 'STOP_SESSION') {
+                      Write-Host "Stop requested" -ForegroundColor Red
+                      & "$saveScript" -Reason 'stop' -Mode 'restart'
+                      'FORCE_STOP_ONLY=1' >> "$env:GITHUB_ENV"
+                      break
+                  }
+              }
+
               $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
               $remainSec = $endTime - $now
               if ($remainSec -le 0) { break }
 
               if ($now - $lastSave -ge $saveIntervalSec) {
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] AUTO-SAVE" -ForegroundColor Cyan
+                  Write-Host "Auto-save" -ForegroundColor Cyan
                   & "$saveScript" -Reason "auto-save" -Mode "keep"
                   $lastSave = $now
               }
@@ -411,10 +575,7 @@ jobs:
                           if ("$line" -match "^\s*>?\s*$([regex]::Escape("$env:RDP_USER"))\s+" -and "$line" -match "\s+Disc\s+") {
                               $parts = (($line -replace '^>','').Trim()) -split '\s+'
                               $sid = $parts[1..($parts.Count-1)] | Where-Object { $_ -match '^\d+$' } | Select-Object -First 1
-                              if ($sid) {
-                                  Write-Host "Recovery session $sid" -ForegroundColor Yellow
-                                  & tscon.exe "$sid" /dest:console 2>&1 | Out-Null
-                              }
+                              if ($sid) { & tscon.exe "$sid" /dest:console 2>&1 | Out-Null }
                           }
                       }
                   } catch {}
@@ -425,15 +586,16 @@ jobs:
                   $svc = Get-Service 'TermService' -EA SilentlyContinue
                   if ($svc.Status -ne 'Running') { Start-Service 'TermService' -EA SilentlyContinue }
                   $remainMin = [math]::Floor($remainSec / 60)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $env:MACHINE_ID | RDP:$($svc.Status) | Con:${remainMin}m" -ForegroundColor Blue
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $env:MACHINE_ID | RDP:$($svc.Status) | Left:${remainMin}m" -ForegroundColor Blue
               }
-
               Start-Sleep 20
           }
 
-          & "$saveScript" -Reason "session-end" -Mode "restart"
+          if ($env:FORCE_STOP_ONLY -ne '1') {
+              & "$saveScript" -Reason "session-end" -Mode "restart"
+          }
 
-          if ("$env:AUTO_RESTART" -eq "true") {
+          if (("$env:AUTO_RESTART" -eq "true" -or "$env:FORCE_NEXT_SESSION" -eq "1") -and "$env:FORCE_STOP_ONLY" -ne "1") {
               $wf = [System.IO.Path]::GetFileName(("$env:GITHUB_WORKFLOW_REF" -split '@')[0])
               gh workflow run "$wf" --ref "$env:GITHUB_REF_NAME" `
                   -f "machine_id=$env:MACHINE_ID" `
@@ -447,6 +609,5 @@ jobs:
                   -f "auto_save_interval_min=$env:AUTO_SAVE_INTERVAL_MIN" `
                   -f "auto_restart=true" `
                   -f "keep_session=$env:KEEP_SESSION"
-              Write-Host "Triggered new session" -ForegroundColor Green
           }
           exit 0

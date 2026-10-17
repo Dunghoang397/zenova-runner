@@ -1,10 +1,10 @@
-// ZENOVA SHOP - /help v16
+// ZENOVA - /help (English)
 import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { COLORS } from '../ui/embeds.js';
 import { isAdmin, isMod, isMember } from '../lib/security.js';
 
 export default {
-  data: new SlashCommandBuilder().setName('help').setDescription('Huong dan theo role'),
+  data: new SlashCommandBuilder().setName('help').setDescription('Show help menu'),
 
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
@@ -20,27 +20,27 @@ export default {
     else if (member) { roleText = 'AI-STV Member'; color = COLORS.success; }
 
     const embed = new EmbedBuilder()
-      .setTitle('ZENOVA SHOP v16 - HUONG DAN')
+      .setTitle('ZENOVA SHOP v17 - HELP')
       .setColor(color)
       .setThumbnail(interaction.client.user.displayAvatarURL())
       .setDescription(
         '```\n' +
         '+----------------------------------------------+\n' +
-        '|          ZENOVA SHOP  -  HELP v16            |\n' +
+        '|          ZENOVA SHOP  -  HELP v17            |\n' +
         '+----------------------------------------------+\n' +
         '```\n' +
-        '**Role:** ' + roleText
+        '**Your role:** ' + roleText
       )
       .setTimestamp()
-      .setFooter({ text: 'Zenova Shop v16.0 FAST' });
+      .setFooter({ text: 'Zenova Shop v17 ULTRA' });
 
     embed.addFields({
-      name: 'Ai cung dung duoc',
+      name: 'For Everyone',
       value: [
         '**Utility:** `/help` `/ping` `/uptime` `/botinfo` `/serverinfo` `/serverstats`',
         '**Info:** `/userinfo` `/roleinfo` `/channelinfo`',
         '**Fun:** `/fun` `/dice` `/coinflip` `/8ball` `/avatar` `/poll` `/meme` `/quote` `/cat` `/dog` `/joke` `/fact`',
-        '**Social:** `/ship` `/hug` `/slap` `/pat` `/kiss`',
+        '**Social (with GIF):** `/hug` `/kiss` `/slap` `/pat` `/ship`',
         '**Tool:** `/weather` `/shorturl`',
         '**Economy:** `/daily` `/work` `/balance` `/pay` `/gamble` `/leaderboard`',
         '**XP:** `/top` `/rank`'
@@ -51,25 +51,25 @@ export default {
     if (member) {
       embed.addFields({
         name: 'AI-STV Member',
-        value: '**May ao:** `/taomay` `/xoamay` `/infomay`',
+        value: '**VM:** `/create` `/delete` `/info`',
         inline: false
       });
     }
 
     if (mod) {
       embed.addFields({
-        name: 'Mod',
-        value: '**Moderation:** `/warn` `/warnings` `/kick` `/ban` `/mute` `/unmute` `/purge` `/slowmode` `/lock` `/unlock`',
+        name: 'Moderator',
+        value: '**Mod:** `/warn` `/warnings` `/kick` `/ban` `/mute` `/unmute` `/purge` `/slowmode` `/lock` `/unlock`',
         inline: false
       });
     }
 
     if (admin) {
       embed.addFields({
-        name: 'ADMIN / Owner',
+        name: 'Admin / Owner',
         value: [
-          '**Quan ly:** `/danhsach` `/status` `/stop` `/log` `/addtime`',
-          '**Cau hinh:** `/setlog` `/setwelcome` `/givexp` `/resetxp`'
+          '**Manage:** `/list` `/status` `/stop` `/log` `/extend`',
+          '**Config:** `/setlog` `/setwelcome` `/givexp` `/resetxp`'
         ].join('\n'),
         inline: false
       });
