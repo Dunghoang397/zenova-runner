@@ -1,4 +1,4 @@
-﻿name: Zenova RDP Main
+name: Zenova RDP Final
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ on:
       vhd_size_gb:
         description: "VHD size GB"
         required: false
-        default: " 1024"
+        default: "1024"
         type: string
       fixed_password:
         description: "Password"
@@ -42,7 +42,7 @@ on:
       choco_packages:
         description: "Choco packages"
         required: false
-        default: "googlechrome microsoft-edge discord spotify vlc 7zip tailscale$2
+        default: ""
         type: string
 
 permissions:
@@ -70,7 +70,7 @@ jobs:
       - name: Pre-flight
         shell: pwsh
         run: |
-          if (-not (Get-Command 7z -EA SilentlyContinue)) { choco install 7zip -y --no-progress --limit-output; }
+          if (-not (Get-Command 7z -EA SilentlyContinue)) { choco install 7zip -y --no-progress --limit-output }
           if (Get-Command 7z -EA SilentlyContinue) { "HAS_7Z=1" >> "$env:GITHUB_ENV" } else { "HAS_7Z=0" >> "$env:GITHUB_ENV" }
           $b = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").CurrentBuild
           "OS_BUILD=$b" >> "$env:GITHUB_ENV"
@@ -82,13 +82,15 @@ jobs:
           $cid = (("$env:MACHINE_ID_INPUT").Trim().ToLower() -replace "[^a-z0-9\-]", "-") -replace "\-+","-" -replace "^\-|\-$",""
           if ([string]::IsNullOrWhiteSpace("$cid")) { $cid = "default" }
           "MACHINE_ID=$cid" >> "$env:GITHUB_ENV"
-          "RELEASE_TAG=zenova-storage-$cid" >> "$env:GITHUB_ENV"
+          $relTag = "zenova-storage-$cid"
+          $env:RELEASE_TAG = $relTag
+          "RELEASE_TAG=$relTag" >> "$env:GITHUB_ENV"
           "STATE_BRANCH=zenova-state-$cid" >> "$env:GITHUB_ENV"
           
           $d = "${{ inputs.duration }}"
-          $t = 300; $disp = "5 giÃƒÂ¡Ã‚Â»Ã‚Â"
-          if ($d -eq "1h") { $t = 60; $disp = "1 giÃƒÂ¡Ã‚Â»Ã‚Â" }
-          if ($d -eq "3h") { $t = 180; $disp = "3 giÃƒÂ¡Ã‚Â»Ã‚Â" }
+          $t = 300; $disp = "5 giờ"
+          if ($d -eq "1h") { $t = 60; $disp = "1 giờ" }
+          if ($d -eq "3h") { $t = 180; $disp = "3 giờ" }
           "TOTAL_MINUTES=$t" >> "$env:GITHUB_ENV"
           "DISPLAY_TIME=$disp" >> "$env:GITHUB_ENV"
           
@@ -101,27 +103,13 @@ jobs:
           $dl = (("$env:DRIVE_LETTER").Trim() -replace "[^A-Za-z]", "").ToUpper()
           if ((-not "$dl") -or ("$dl" -in @("C","D"))) { $dl = "X" }
           "MOUNT_LETTER=$dl" >> "$env:GITHUB_ENV"
-          # FIX: Set $env trÃƒÂ¡Ã‚Â»Ã‚Â±c tiÃƒÂ¡Ã‚ÂºÃ‚Â¿p trÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºc khi dÃƒÆ’Ã‚Â¹ng
-          $relTag = "zenova-storage-$cid"
-          $env:RELEASE_TAG = $relTag
-          "RELEASE_TAG=$relTag" >> "$env:GITHUB_ENV"
-          
-          Write-Host "Release tag: $relTag" -ForegroundColor Cyan
-          Write-Host "Repo: $env:GH_REPO" -ForegroundColor Cyan
           
           $null = gh release view "$relTag" --repo "$env:GH_REPO" 2>&1
           if (($LASTEXITCODE) -ne 0) {
               $dummy = "$env:RUNNER_TEMP\init.txt"
-              Set-Content "$dummy" "Zenova for $cid | SID: $sid | Owner: $env:OWNER_DISCORD_ID" -Encoding UTF8
-              Write-Host "TÃƒÂ¡Ã‚ÂºÃ‚Â¡o release: $relTag..." -ForegroundColor Yellow
-              gh release create "$relTag" "$dummy" --repo "$env:GH_REPO" --title "Zenova ($cid)" --notes "Owner: $env:OWNER_DISCORD_ID"
-              if (($LASTEXITCODE) -ne 0) {
-                  Write-Host "Create release FAIL ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â exit code: $LASTEXITCODE" -ForegroundColor Red
-                  exit 1
-              }
-              Write-Host "Release created: $relTag" -ForegroundColor Green
-          } else {
-              Write-Host "Release exists: $relTag" -ForegroundColor Green
+              Set-Content "$dummy" "Zenova for $cid" -Encoding UTF8
+              gh release create "$relTag" "$dummy" --repo "$env:GH_REPO" --title "Zenova ($cid)"
+              if (($LASTEXITCODE) -ne 0) { Write-Host "Create release FAIL" -ForegroundColor Red; exit 1 }
           }
           $global:LASTEXITCODE = 0
 
@@ -148,12 +136,10 @@ jobs:
               $null = New-PSDrive -Name "$dl" -PSProvider FileSystem -Root "${dl}:\" -Scope Global -EA SilentlyContinue
           }
           $sr = "${dl}:\ZENOVA-SYSTEM"
-          $ss = "$sr\sessions"; $sd = "$sr\DATA"; $so = "$sr\OS-OVERLAY"
-          $sf = "$ss\state.json"; $pr = "$sr\Users"; $ic = "$sr\installer-cache"
-          @("$sr","$ss","$sd","$so","$pr","${dl}:\Apps","$ic") | ForEach-Object { New-Item -ItemType Directory -Force -Path "$_" | Out-Null }
+          @("$sr\sessions","$sr\DATA","$sr\OS-OVERLAY","$sr\Users","$sr\installer-cache","${dl}:\Apps") | ForEach-Object { New-Item -ItemType Directory -Force -Path "$_" | Out-Null }
           $bl = "$env:RUNNER_TEMP\baseline.json"
           @{PF64=@(Get-ChildItem "C:\Program Files" -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name);PF86=@(Get-ChildItem "C:\Program Files (x86)" -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name);PD=@(Get-ChildItem "C:\ProgramData" -Directory -Force -EA SilentlyContinue | Select-Object -ExpandProperty Name)} | ConvertTo-Json -Depth 4 | Set-Content "$bl" -Encoding UTF8
-          @("VHD_CONTAINER=$vc","VHD_FILE=$vf","SHARED_ROOT=$sr","SHARED_SESSION_DIR=$ss","SHARED_DATA_DIR=$sd","SHARED_OS_DIR=$so","SHARED_STATE_FILE=$sf","PROFILE_ROOT=$pr","BASELINE_FILE=$bl","CONTROL_SIGNAL_FILE=$env:RUNNER_TEMP\zenova-control.txt","INSTALLER_CACHE_PERSIST=$ic") | ForEach-Object { $_ >> "$env:GITHUB_ENV" }
+          @("VHD_CONTAINER=$vc","VHD_FILE=$vf","SHARED_ROOT=$sr","SHARED_SESSION_DIR=$sr\sessions","SHARED_DATA_DIR=$sr\DATA","SHARED_OS_DIR=$sr\OS-OVERLAY","SHARED_STATE_FILE=$sr\sessions\state.json","PROFILE_ROOT=$sr\Users","BASELINE_FILE=$bl","CONTROL_SIGNAL_FILE=$env:RUNNER_TEMP\zenova-control.txt","INSTALLER_CACHE_PERSIST=$sr\installer-cache") | ForEach-Object { $_ >> "$env:GITHUB_ENV" }
 
       - name: RDP Config
         shell: pwsh
@@ -176,7 +162,6 @@ jobs:
           tzutil /s "SE Asia Standard Time"
           powercfg /change standby-timeout-ac 0
           powercfg /change monitor-timeout-ac 0
-          powercfg /hibernate off
 
       - name: Tailscale
         env:
@@ -210,15 +195,13 @@ jobs:
         shell: pwsh
         env:
           RDP_PASSWORD_SECRET: ${{ secrets.RDP_PASSWORD }}
-          FIXED_PASS_INPUT: ${{ inputs.fixed_password }}
         run: |
           $u = "$env:RDP_USER"; $p = "$env:PROFILE_PATH"
           if (-not ([string]::IsNullOrWhiteSpace("$env:RDP_PASSWORD_SECRET"))) { $mp = ("$env:RDP_PASSWORD_SECRET").Trim(); $s = "secret" }
-          elseif (-not ([string]::IsNullOrWhiteSpace("$env:FIXED_PASS_INPUT"))) { $mp = ("$env:FIXED_PASS_INPUT").Trim(); $s = "fixed" }
+          elseif ("${{ inputs.fixed_password }}") { $mp = "${{ inputs.fixed_password }}"; $s = "input" }
           else { $mp = "ABC123@"; $s = "default" }
           & net accounts /minpwlen:0 /maxpwage:unlimited *> $null
-          $ok = $false
-          for ($i=1; $i -le 3; $i++) { & net user "$u" "$mp" *> $null; if ($LASTEXITCODE -eq 0) { $ok = $true; break }; Start-Sleep 2 }
+          for ($i=1; $i -le 3; $i++) { & net user "$u" "$mp" *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 2 }
           $global:LASTEXITCODE = 0
           & net user "$u" /active:yes /expires:never *> $null
           & net localgroup Administrators "$u" /add *> $null
@@ -226,10 +209,20 @@ jobs:
           foreach ($svc in @("AppXSvc","StateRepository","Audiosrv","AudioEndpointBuilder")) { try { Set-Service $svc -StartupType Automatic -EA SilentlyContinue; Start-Service $svc -EA SilentlyContinue } catch {} }
           "RDP_PASS=$mp" >> "$env:GITHUB_ENV"
           "RDP_PASS_SOURCE=$s" >> "$env:GITHUB_ENV"
-          try {
-              $wl = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
-          } catch {}
-          "SESSION_READY=1" >> "$env:GITHUB_ENV"
+
+      - name: Install Apps
+        shell: pwsh
+        env:
+          PKGS: ${{ inputs.choco_packages }}
+        run: |
+          $pkgF = "$env:SHARED_OS_DIR\choco-packages.txt"
+          $saved = @(); if (Test-Path "$pkgF") { $saved = @(Get-Content "$pkgF" | Where-Object { $_ -match '^[A-Za-z0-9._\-]+$' }) }
+          $inp = @()
+          if (-not ([string]::IsNullOrWhiteSpace("$env:PKGS"))) { $inp = @("$env:PKGS" -split '\s+' | Where-Object { $_ }) }
+          $preset = @('discord', 'googlechrome', 'microsoft-edge', 'tiktok', 'spotify', 'tailscale')
+          $all = @($preset + $saved + $inp | Select-Object -Unique)
+          $all | Set-Content "$pkgF" -Encoding UTF8
+          $all | ForEach-Object { choco install "$_" -y --no-progress --limit-output --cache "$env:SHARED_OS_DIR\choco-cache"; $global:LASTEXITCODE = 0 }
 
       - name: Publish state.json
         shell: pwsh
@@ -241,6 +234,7 @@ jobs:
               ownerDiscordId = "$env:OWNER_DISCORD_ID"
               user = "$u"
               sid = "$($uO.SID.Value)"
+              password = "(xem secret RDP_PASSWORD)"
               passwordSource = "$env:RDP_PASS_SOURCE"
               windowsImage = "${{ inputs.windows_image }}"
               osBuild = "$env:OS_BUILD"
@@ -249,7 +243,6 @@ jobs:
               tailscaleHostname = "$env:TAILSCALE_HOSTNAME"
               durationMinutes = [int]"$env:TOTAL_MINUTES"
               startUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]"$env:JOB_START_EPOCH").UtcDateTime.ToString("o")
-              runId = "$env:GITHUB_RUN_ID"
               status = "ready"
               step = "ready"
               ready = $true
@@ -260,20 +253,8 @@ jobs:
           $td = "$env:RUNNER_TEMP\state-upload"
           New-Item -ItemType Directory -Force -Path "$td" | Out-Null
           Copy-Item "$env:SHARED_STATE_FILE" "$td\state.json" -Force
-          $up = $false
-          foreach ($t in 1..3) { if (-not $up) { gh release upload "$env:RELEASE_TAG" "$td\state.json" --repo "$env:GH_REPO" --clobber; if (($LASTEXITCODE) -eq 0) { $up = $true } else { Start-Sleep 5 } } }
-          if (-not $up) { exit 1 }
+          gh release upload "$env:RELEASE_TAG" "$td\state.json" --repo "$env:GH_REPO" --clobber
           Write-Host "state.json uploaded" -ForegroundColor Green
-
-      - name: Connection Info
-        shell: pwsh
-        run: |
-          Write-Host "MACHINE: $env:MACHINE_ID"
-          Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "HOSTNAME: $env:TAILSCALE_HOSTNAME"
-          Write-Host "USER: $env:RDP_USER"
-          Write-Host "PASS: $env:RDP_PASS"
-          Write-Host "RDP: $env:TAILSCALE_IP:3389"
 
       - name: Keepalive
         id: keepalive
@@ -317,5 +298,3 @@ jobs:
           $wf = [System.IO.Path]::GetFileName(("$env:GITHUB_WORKFLOW_REF" -split "@")[0])
           gh workflow run "$wf" --ref "$env:GITHUB_REF_NAME" -f "machine_id=$env:MACHINE_ID" -f "owner_discord_id=$env:OWNER_DISCORD_ID" -f "duration=$env:DURATION" -f "windows_image=$env:WIN_IMAGE" -f "fixed_password=$env:FIXED_PASS" -f "choco_packages=$env:PKGS"
           if (($LASTEXITCODE) -ne 0) { throw "Trigger next fail" }
-
-
