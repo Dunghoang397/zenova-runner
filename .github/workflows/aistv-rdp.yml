@@ -170,7 +170,6 @@ jobs:
           Restart-Service TermService -Force -EA SilentlyContinue
           Start-Sleep 3
           Remove-NetFirewallRule -DisplayName "ZENOVA-*" -EA SilentlyContinue
-          New-NetFirewallRule -DisplayName "ZENOVA-Tailscale" -Direction Inbound -Action Allow -Protocol Any -InterfaceAlias "Tailscale" -Profile Any | Out-Null
           New-NetFirewallRule -DisplayName "ZENOVA-RDP" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389,8080 -RemoteAddress "100.64.0.0/10","127.0.0.1","::1" -Profile Any | Out-Null
           Set-Service TermService -StartupType Automatic -EA SilentlyContinue
           Start-Service TermService -EA SilentlyContinue
