@@ -1,11 +1,8 @@
-﻿name: zenova-test-dispatch
-
-on:
-  workflow_dispatch:
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Ping
-        run: echo "dispatch works"
+﻿# name: zenova-test-dispatch
+# on:
+#   workflow_dispatch:
+# jobs:
+#   test:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - run: echo "test"
