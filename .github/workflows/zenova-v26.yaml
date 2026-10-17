@@ -1,4 +1,4 @@
-name: Zenova RDP Final
+name: Zenova RDP v26
 
 on:
   workflow_dispatch:
@@ -210,6 +210,39 @@ jobs:
           "RDP_PASS=$mp" >> "$env:GITHUB_ENV"
           "RDP_PASS_SOURCE=$s" >> "$env:GITHUB_ENV"
 
+      - name: Publish state (installing)
+        shell: pwsh
+        run: |
+          $u = "$env:RDP_USER"
+          $uO = Get-LocalUser -Name "$u" -EA SilentlyContinue
+          $st = [ordered]@{
+              machineId = "$env:MACHINE_ID"
+              ownerDiscordId = "$env:OWNER_DISCORD_ID"
+              user = "$u"
+              sid = "$($uO.SID.Value)"
+              password = "(xem secret RDP_PASSWORD)"
+              passwordSource = "$env:RDP_PASS_SOURCE"
+              windowsImage = "${{ inputs.windows_image }}"
+              osBuild = "$env:OS_BUILD"
+              driveLetter = "$env:MOUNT_LETTER"
+              tailscaleIp = "$env:TAILSCALE_IP"
+              tailscaleHostname = "$env:TAILSCALE_HOSTNAME"
+              durationMinutes = [int]"$env:TOTAL_MINUTES"
+              startUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]"$env:JOB_START_EPOCH").UtcDateTime.ToString("o")
+              status = "installing"
+              step = "installing_apps"
+              ready = $false
+              appsReady = $false
+              lastUpdatedUtc = (Get-Date).ToUniversalTime().ToString("o")
+          }
+          New-Item -ItemType Directory -Force -Path (Split-Path "$env:SHARED_STATE_FILE") | Out-Null
+          $st | ConvertTo-Json -Depth 5 | Set-Content "$env:SHARED_STATE_FILE" -Encoding UTF8
+          $td = "$env:RUNNER_TEMP\state-upload"
+          New-Item -ItemType Directory -Force -Path "$td" | Out-Null
+          Copy-Item "$env:SHARED_STATE_FILE" "$td\state.json" -Force
+          gh release upload "$env:RELEASE_TAG" "$td\state.json" --repo "$env:GH_REPO" --clobber
+          Write-Host "State: INSTALLING" -ForegroundColor Yellow
+
       - name: Install Apps
         shell: pwsh
         env:
@@ -222,9 +255,25 @@ jobs:
           $preset = @('discord', 'googlechrome', 'microsoft-edge', 'tiktok', 'spotify', 'tailscale')
           $all = @($preset + $saved + $inp | Select-Object -Unique)
           $all | Set-Content "$pkgF" -Encoding UTF8
-          $all | ForEach-Object { choco install "$_" -y --no-progress --limit-output --cache "$env:SHARED_OS_DIR\choco-cache"; $global:LASTEXITCODE = 0 }
+          
+          $failed = @()
+          $installed = @()
+          foreach ($pkg in $all) {
+              Write-Host "📦 Cài $pkg..." -ForegroundColor Cyan
+              choco install "$pkg" -y --no-progress --limit-output --cache "$env:SHARED_OS_DIR\choco-cache"
+              $code = $LASTEXITCODE
+              if ($code -eq 0 -or $code -eq 3010) { $installed += $pkg } else { $failed += $pkg }
+              $global:LASTEXITCODE = 0
+          }
+          
+          Write-Host "✅ Installed: $($installed -join ', ')" -ForegroundColor Green
+          if ($failed.Count -gt 0) { Write-Host "⚠️  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
+          
+          "APPS_READY=1" >> "$env:GITHUB_ENV"
+          "INSTALLED_APPS=$($installed -join ',')" >> "$env:GITHUB_ENV"
+          "FAILED_APPS=$($failed -join ',')" >> "$env:GITHUB_ENV"
 
-      - name: Publish state.json
+      - name: Publish state (ready)
         shell: pwsh
         run: |
           $u = "$env:RDP_USER"
@@ -246,6 +295,9 @@ jobs:
               status = "ready"
               step = "ready"
               ready = $true
+              appsReady = $true
+              installedApps = "$env:INSTALLED_APPS"
+              failedApps = "$env:FAILED_APPS"
               lastUpdatedUtc = (Get-Date).ToUniversalTime().ToString("o")
           }
           New-Item -ItemType Directory -Force -Path (Split-Path "$env:SHARED_STATE_FILE") | Out-Null
@@ -254,7 +306,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$td" | Out-Null
           Copy-Item "$env:SHARED_STATE_FILE" "$td\state.json" -Force
           gh release upload "$env:RELEASE_TAG" "$td\state.json" --repo "$env:GH_REPO" --clobber
-          Write-Host "state.json uploaded" -ForegroundColor Green
+          
+          # Verify
+          Start-Sleep 2
+          $assets = gh release view "$env:RELEASE_TAG" --repo "$env:GH_REPO" --json assets | ConvertFrom-Json
+          $hasState = @($assets.assets | Where-Object { $_.name -eq "state.json" }).Count -gt 0
+          Write-Host "State: READY (state.json verified: $hasState)" -ForegroundColor Green
 
       - name: Keepalive
         id: keepalive
@@ -264,6 +321,7 @@ jobs:
           $sf = "$env:CONTROL_SIGNAL_FILE"
           $stateFile = "$env:SHARED_STATE_FILE"
           $lhb = Get-Date
+          $lastLog = Get-Date
           while ($true) {
               if (Test-Path "$sf") {
                   $cmd = (Get-Content -Raw "$sf" -EA SilentlyContinue).Trim()
@@ -281,8 +339,22 @@ jobs:
                   } catch {}
                   $lhb = Get-Date
               }
+              
+              # Health check services
+              $svc = Get-Service "TermService" -EA SilentlyContinue
+              if ($svc.Status -ne "Running") { Start-Service "TermService" -EA SilentlyContinue }
+              $aud = Get-Service "Audiosrv" -EA SilentlyContinue
+              if ($aud.Status -ne "Running") { Start-Service "AudioEndpointBuilder" -EA SilentlyContinue; Start-Service "Audiosrv" -EA SilentlyContinue }
+              
               $r = ($ee) - ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
               if (($r) -le 0) { break }
+              
+              if (((Get-Date) - $lastLog).TotalMinutes -ge 10) {
+                  $h = [math]::Floor($r/3600); $m = [math]::Floor(($r%3600)/60)
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | Còn: ${h}h${m}m" -ForegroundColor Blue
+                  $lastLog = Get-Date
+              }
+              
               Start-Sleep 2
           }
 

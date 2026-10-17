@@ -412,7 +412,7 @@ export async function waitForWorkflowCompletion(
   onProgress = null
 ) {
   const startTime = Date.now();
-  logger.info('Poll state ' + machineId + ' | max ' + Math.round(maxWaitMs/1000) + 's');
+  logger.info('Poll (3-tier + appsReady) ' + machineId + ' | max ' + Math.round(maxWaitMs/1000) + 's');
 
   await new Promise(r => setTimeout(r, 3000));
 
@@ -420,6 +420,7 @@ export async function waitForWorkflowCompletion(
   let consecutiveFails = 0;
   let bestState = null;
   let lastLogAt = 0;
+  let phase = 'init';
 
   while (Date.now() - startTime < maxWaitMs) {
     attempt++;
@@ -429,6 +430,7 @@ export async function waitForWorkflowCompletion(
       if (state && state.tailscaleIp && state.tailscaleIp !== '?') {
         bestState = state;
         consecutiveFails = 0;
+        phase = state.status || 'init';
       } else {
         consecutiveFails++;
       }
@@ -442,8 +444,12 @@ export async function waitForWorkflowCompletion(
         try { await onProgress({ attempt, state, elapsed: Date.now() - startTime }); } catch {}
       }
 
-      if (state && state.tailscaleIp && state.tailscaleIp !== '?'
-          && state.user && state.user !== '?') {
+      // SUCCESS: có IP + user + appsReady
+      const hasIp = state && state.tailscaleIp && state.tailscaleIp !== '?';
+      const hasUser = state && state.user && state.user !== '?';
+      const appsReady = state && (state.appsReady === true || state.status === 'ready');
+      
+      if (hasIp && hasUser && appsReady) {
         logger.ok('READY attempt=' + attempt + ' t=' + Math.round((Date.now() - startTime) / 1000) + 's src=' + (state._source || '?'));
         return { 
           success: true, 
@@ -454,12 +460,18 @@ export async function waitForWorkflowCompletion(
         };
       }
 
+      // Log mỗi 15 lần
       if (attempt - lastLogAt >= 15) {
-        logger.info('Poll ' + attempt + ' | src:' + (state?._source || 'none') + ' | step:' + (state?.step || '-') + ' | ' + Math.round((Date.now() - startTime) / 1000) + 's');
+        logger.info('Poll ' + attempt + ' | step:' + (state?.step || '-') + ' | apps:' + (appsReady ? 'YES' : 'NO') + ' | ' + Math.round((Date.now() - startTime) / 1000) + 's');
         lastLogAt = attempt;
       }
 
-      await new Promise(r => setTimeout(r, intervalMs));
+      // Progressive: 2s → 3s → 5s
+      let waitTime = intervalMs;
+      if (attempt > 60) waitTime = intervalMs * 2;
+      if (attempt > 150) waitTime = intervalMs * 3;
+      
+      await new Promise(r => setTimeout(r, waitTime));
       
     } catch (e) {
       logger.dbg('Poll fail: ' + e.message);
@@ -469,7 +481,7 @@ export async function waitForWorkflowCompletion(
   }
 
   if (bestState) {
-    logger.warn('Timeout but có state partial');
+    logger.warn('Timeout but có partial state');
     return { success: true, manifest: bestState, attempts: attempt, elapsed: Date.now() - startTime, fallback: true };
   }
 
