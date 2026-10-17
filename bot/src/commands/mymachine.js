@@ -1,6 +1,5 @@
 ﻿import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { listMachines, getStateJson } from '../lib/github.js';
-import { logger } from '../lib/logger.js';
 
 export const data = new SlashCommandBuilder()
   .setName('mymachine')
@@ -8,10 +7,8 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   await interaction.deferReply({ ephemeral: true });
-  
   const userId = interaction.user.id;
   const machines = await listMachines();
-  
   let userMachine = null;
   for (const m of machines) {
     const state = await getStateJson(m.id);
@@ -20,13 +17,9 @@ export async function execute(interaction) {
       break;
     }
   }
-  
   if (!userMachine) {
-    return interaction.editReply({
-      content: '❌ Bạn chưa có máy nào. Dùng `/create` để tạo.'
-    });
+    return interaction.editReply({ content: '❌ Bạn chưa có máy. Dùng /create để tạo.' });
   }
-  
   const s = userMachine.state;
   const embed = new EmbedBuilder()
     .setTitle(`🖥️ Máy của ${interaction.user.username}`)
@@ -36,10 +29,9 @@ export async function execute(interaction) {
       { name: '📊 Trạng thái', value: s.ready ? '✅ Sẵn sàng' : '⏳ Đang khởi tạo', inline: true },
       { name: '🌐 IP', value: s.tailscaleIp || 'N/A', inline: true },
       { name: '👤 User', value: s.user || 'runneradmin', inline: true },
-      { name: '🔐 Pass', value: s.password || '(secret)', inline: true },
+      { name: '🔐 Pass', value: s.password || 'ABC123@', inline: true },
       { name: '🖥️ RDP', value: s.tailscaleIp ? `${s.tailscaleIp}:3389` : 'N/A', inline: false }
     )
     .setTimestamp();
-  
   await interaction.editReply({ embeds: [embed] });
 }

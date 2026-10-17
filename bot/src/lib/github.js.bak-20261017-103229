@@ -1,0 +1,634 @@
+// ═══════════════════════════════════════════════════════════════
+// ZENOVA GITHUB API v20 FINAL
+// 3-tier state fetching + circuit breaker + smart dispatch
+// ═══════════════════════════════════════════════════════════════
+import { Octokit } from '@octokit/rest';
+import { logger } from './logger.js';
+
+// ═══ AUTO-INJECTED: Duration validator ═══
+function normalizeDuration(input) {
+  if (!input) return '5h00m';
+  const str = String(input).toLowerCase().trim();
+  const hourMatch = str.match(/(\d+)\s*h/);
+  const hours = hourMatch ? parseInt(hourMatch[1]) : 5;
+  if (hours <= 1) return '1h';
+  if (hours <= 3) return '3h';
+  return '5h00m';
+}
+
+// ═══ AUTO-INJECTED: Remove invalid workflow inputs ═══
+const VALID_WORKFLOW_INPUTS = [
+  'machine_id',
+  'owner_discord_id',
+  'duration',
+  'windows_image',
+  'drive_letter',
+  'vhd_size_gb',
+  'fixed_password',
+  'choco_packages'
+];
+
+function sanitizeInputs(obj) {
+  const result = {};
+  for (const key of VALID_WORKFLOW_INPUTS) {
+    if (obj[key] !== undefined && obj[key] !== null && obj[key] !== '') {
+      result[key] = obj[key];
+    }
+  }
+  // Luôn đảm bảo duration hợp lệ
+  if (result.duration) {
+    result.duration = normalizeDuration(result.duration);
+  } else {
+    result.duration = '5h00m';
+  }
+  return result;
+}
+
+const cfg = {
+  owner: process.env.GH_OWNER,
+  repo: process.env.GH_REPO,
+  branch: process.env.GH_BRANCH || 'main',
+  workflow: process.env.GH_WORKFLOW || 'aistv-rdp.yml'
+};
+
+export const octokit = new Octokit({
+  auth: process.env.GH_TOKEN,
+  userAgent: 'zenova-bot/20.0'
+});
+
+const tag = (id) => `zenova-storage-${id}`;
+const branch = (id) => `zenova-state-${id}`;
+
+async function ghApi(path, options = {}) {
+  const url = 'https://api.github.com' + path;
+  const headers = {
+    'Accept': 'application/vnd.github+json',
+    'Authorization': 'Bearer ' + process.env.GH_TOKEN,
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'zenova-bot/20.0',
+    ...(options.headers || {})
+  };
+  const res = await fetch(url, { ...options, headers, cache: 'no-store' });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error('HTTP ' + res.status + ': ' + txt.slice(0, 200));
+  }
+  if (res.status === 204) return null;
+  return await res.json();
+}
+
+export async function dispatchCreate(inputs) {
+  if (!/^[a-z0-9\-]+$/.test(inputs.machine_id)) {
+    throw new Error('Machine ID: chỉ a-z, 0-9, dấu gạch');
+  }
+  
+  const cleanInputs = {};
+  cleanInputs.machine_id = inputs.machine_id;
+  
+  if (inputs.owner_discord_id) {
+    cleanInputs.owner_discord_id = String(inputs.owner_discord_id);
+  }
+  
+  // Duration: map về 1h/3h/5h00m
+  const durStr = String(inputs.duration || '5h00m').toLowerCase().trim();
+  const hourMatch = durStr.match(/(\d+)\s*h/);
+  const hours = hourMatch ? parseInt(hourMatch[1]) : 5;
+  if (hours <= 1) {
+    cleanInputs.duration = '1h';
+  } else if (hours <= 3) {
+    cleanInputs.duration = '3h';
+  } else {
+    cleanInputs.duration = '5h00m';
+  }
+  
+  // Windows image
+  const imgStr = String(inputs.windows_image || 'windows-2025').toLowerCase();
+  if (imgStr.includes('2022')) {
+    cleanInputs.windows_image = 'windows-2022';
+  } else {
+    cleanInputs.windows_image = 'windows-2025';
+  }
+  
+  // Drive letter
+  const dl = String(inputs.drive_letter || 'X').trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (dl && dl !== 'C' && dl !== 'D') {
+    cleanInputs.drive_letter = dl;
+  } else {
+    cleanInputs.drive_letter = 'X';
+  }
+  
+  // ═══ PASSWORD: ưu tiên secret > input > state > default ═══
+  let password = '(Xem trong secret)';
+  if (process.env.RDP_PASSWORD) {
+    password = process.env.RDP_PASSWORD;
+  } else if (inputs.fixed_password) {
+    password = inputs.fixed_password;
+  }
+  cleanInputs.fixed_password = password;
+  
+  // ═══ CHROME APPS: preset + custom ═══
+  const presetApps = 'googlechrome 7zip';
+  const customApps = String(inputs.choco_packages || '').trim();
+  cleanInputs.choco_packages = customApps 
+    ? `${presetApps} ${customApps}` 
+    : presetApps;
+  
+  // VHD size
+  cleanInputs.vhd_size_gb = String(inputs.vhd_size_gb || '45');
+  
+  console.log('[dispatchCreate] Clean inputs:', JSON.stringify(cleanInputs));
+  logger.cmd('Smart dispatch: ' + cleanInputs.machine_id + ' (duration=' + cleanInputs.duration + ')');
+  
+  // ═══ CANCEL RUN CŨ CÙNG MACHINE ═══
+  try {
+    const active = await listActiveRuns();
+    const sameMachine = active.filter(r => 
+      (r.display_title || '').toLowerCase().includes(cleanInputs.machine_id.toLowerCase())
+    );
+    
+    if (sameMachine.length > 0) {
+      logger.info('Cancel ' + sameMachine.length + ' run cũ cùng máy...');
+      for (const r of sameMachine) {
+        try { await cancelRun(r.id); } catch {}
+      }
+      await new Promise(r => setTimeout(r, 8000));
+    }
+  } catch (e) {
+    logger.dbg('Cancel old: ' + e.message);
+  }
+  
+  await ghApi(
+    '/repos/' + cfg.owner + '/' + cfg.repo + '/actions/workflows/' + cfg.workflow + '/dispatches',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref: cfg.branch, inputs: cleanInputs })
+    }
+  );
+  
+  logger.ok('Dispatched: ' + cleanInputs.machine_id + ' (duration=' + cleanInputs.duration + ')');
+}
+
+export async function listMachines() {
+  const releases = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases?per_page=100');
+  return releases
+    .filter(r => r.tag_name.startsWith('zenova-storage-'))
+    .map(r => ({
+      id: r.tag_name.replace('zenova-storage-', ''),
+      tag: r.tag_name,
+      releaseId: r.id,
+      assets: r.assets.map(a => ({ name: a.name, size: a.size, id: a.id })),
+      created: r.created_at,
+      updated: r.updated_at,
+      url: r.html_url
+    }));
+}
+
+async function fetchViaApiAsset(stateAssetId) {
+  try {
+    const res = await fetch(
+      'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/releases/assets/' + stateAssetId,
+      {
+        headers: {
+          'Authorization': 'Bearer ' + process.env.GH_TOKEN,
+          'Accept': 'application/octet-stream',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'zenova-bot/20.0',
+          'Cache-Control': 'no-cache, no-store',
+          'If-None-Match': '""'
+        },
+        redirect: 'follow',
+        cache: 'no-store'
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    data._fetchedAt = Date.now();
+    data._source = 'api_asset';
+    return data;
+  } catch (e) {
+    logger.dbg('api_asset: ' + e.message);
+    return null;
+  }
+}
+
+async function fetchViaDownloadUrl(downloadUrl) {
+  try {
+    const ts = Date.now();
+    const rnd = Math.random().toString(36).slice(2, 8);
+    const url = downloadUrl + '?download=1&t=' + ts + '&r=' + rnd;
+    
+    const res = await fetch(url, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
+        'User-Agent': 'zenova-bot/20.0'
+      },
+      redirect: 'follow',
+      cache: 'no-store'
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    data._fetchedAt = Date.now();
+    data._source = 'download_url';
+    return data;
+  } catch (e) {
+    logger.dbg('download_url: ' + e.message);
+    return null;
+  }
+}
+
+async function fetchViaRunLog(machineId) {
+  try {
+    const runs = await listRecentRuns(15);
+    if (!runs.length) return null;
+
+    let targetRun = runs.find(r => 
+      (r.display_title || '').toLowerCase().includes(machineId.toLowerCase())
+    ) || runs[0];
+
+    logger.dbg('run_log: check #' + targetRun.number + ' (' + targetRun.status + ')');
+    
+    const log = await getRunLogTail(targetRun.id, 3000);
+    if (!log || log === '(no log)' || log.length < 100) {
+      return null;
+    }
+
+    const ipPatterns = [
+      /IP\s*:\s*(100\.\d+\.\d+\.\d+)/i,
+      /Tailscale IP\s*[:=]\s*(100\.\d+\.\d+\.\d+)/i,
+      /TAILSCALE_IP\s*[:=]\s*(100\.\d+\.\d+\.\d+)/i,
+      /(?:IP|ip)\s*(?:là|is|=|:)\s*(100\.\d+\.\d+\.\d+)/i,
+      /\b(100\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/
+    ];
+    
+    let ip = null;
+    for (const pattern of ipPatterns) {
+      const m = log.match(pattern);
+      if (m) { ip = m[1]; break; }
+    }
+    
+    if (!ip) {
+      logger.dbg('run_log: no IP found');
+      return null;
+    }
+
+    const userMatch = log.match(/(?:RDP_USER|User|user|Tài khoản)\s*[:=]\s*([a-zA-Z][\w\-]{2,})/i);
+    const user = userMatch ? userMatch[1] : 'runneradmin';
+
+    const passMatch = log.match(/(?:Pass|Password|Mật khẩu)\s*[:=]\s*([^\s]+)/i);
+    let password = process.env.RDP_PASSWORD || 'ABC123@'; if (passMatch && !passMatch[1].includes('secret') && !passMatch[1].includes('dùng')) { password = passMatch[1]; }
+
+    const hostMatch = log.match(/(?:Hostname|Host|hostname)\s*[:=]\s*([a-zA-Z0-9\-\.]{5,})/i);
+    const tailscaleHostname = hostMatch ? hostMatch[1] : '';
+
+    const isReady = /READY|SẴN SÀNG|ready to connect|3389.*listen|RDP.*3389/i.test(log);
+
+    logger.ok('LOG FALLBACK: ' + machineId + ' | ' + ip + ' | ' + user + ' | #' + targetRun.number);
+
+    return {
+      machineId,
+      ownerDiscordId: null,
+      user,
+      password,
+      tailscaleIp: ip,
+      tailscaleHostname,
+      osBuild: '26100',
+      windowsImage: 'windows-2025',
+      status: isReady ? 'ready' : 'starting',
+      step: isReady ? 'ready' : 'init',
+      ready: isReady,
+      partialReady: true,
+      _fromLog: true,
+      _runId: targetRun.id,
+      _runNumber: targetRun.number,
+      _fetchedAt: Date.now(),
+      _source: 'run_log'
+    };
+  } catch (e) {
+    logger.dbg('run_log: ' + e.message);
+    return null;
+  }
+}
+
+export async function getStateJson(machineId) {
+  try {
+    let rel;
+    try {
+      rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
+    } catch (e) {
+      if (e.message.includes('404')) {
+        logger.dbg('getStateJson: release not found, fallback log');
+        return await fetchViaRunLog(machineId);
+      }
+      throw e;
+    }
+
+    const stateAsset = (rel.assets || []).find(a => a.name === 'state.json');
+    
+    if (!stateAsset) {
+      logger.dbg('getStateJson: no state.json, fallback log');
+      return await fetchViaRunLog(machineId);
+    }
+
+    logger.dbg('getStateJson: state.json id=' + stateAsset.id + ' updated=' + stateAsset.updated_at);
+
+    let state = await fetchViaApiAsset(stateAsset.id);
+    if (state && state.tailscaleIp && state.tailscaleIp !== '?' 
+        && state.user && state.user !== '?') {
+      return state;
+    }
+
+    if (stateAsset.browser_download_url) {
+      state = await fetchViaDownloadUrl(stateAsset.browser_download_url);
+      if (state && state.tailscaleIp && state.tailscaleIp !== '?' 
+          && state.user && state.user !== '?') {
+        return state;
+      }
+    }
+
+    const logState = await fetchViaRunLog(machineId);
+    if (logState) {
+      if (state?.ownerDiscordId) logState.ownerDiscordId = state.ownerDiscordId;
+      if (state?.password && state.password !== '?') logState.password = state.password;
+      return logState;
+    }
+
+    return state;
+  } catch (e) {
+    logger.dbg('getStateJson: ' + e.message);
+    return await fetchViaRunLog(machineId);
+  }
+}
+
+export async function getManifest(machineId) {
+  return getStateJson(machineId);
+}
+
+export async function getUserMachine(discordUserId) {
+  const machines = await listMachines();
+  for (const m of machines.slice(0, 30)) {
+    const state = await getStateJson(m.id);
+    if (!state) continue;
+    if (state.ownerDiscordId === discordUserId) {
+      return { ...m, manifest: state };
+    }
+  }
+  return null;
+}
+
+export async function isMachineOwner(discordUserId, machineId) {
+  const state = await getStateJson(machineId);
+  if (!state) return false;
+  if (!state.ownerDiscordId) return true;
+  return state.ownerDiscordId === discordUserId;
+}
+
+export async function listActiveRuns() {
+  const data = await ghApi(
+    '/repos/' + cfg.owner + '/' + cfg.repo + '/actions/workflows/' + cfg.workflow + '/runs?per_page=50'
+  );
+  return (data.workflow_runs || [])
+    .filter(r => ['in_progress', 'queued', 'waiting', 'requested'].includes(r.status))
+    .map(r => ({
+      id: r.id,
+      number: r.run_number,
+      status: r.status,
+      started: r.run_started_at || r.created_at,
+      url: r.html_url,
+      display_title: r.display_title || ''
+    }));
+}
+
+export async function listRecentRuns(limit = 20) {
+  const data = await ghApi(
+    '/repos/' + cfg.owner + '/' + cfg.repo + '/actions/workflows/' + cfg.workflow + '/runs?per_page=' + limit
+  );
+  return (data.workflow_runs || []).map(r => ({
+    id: r.id,
+    number: r.run_number,
+    status: r.status,
+    conclusion: r.conclusion,
+    started: r.run_started_at || r.created_at,
+    updated: r.updated_at,
+    url: r.html_url,
+    event: r.event,
+    display_title: r.display_title || ''
+  }));
+}
+
+export async function waitForWorkflowCompletion(
+  machineId, 
+  maxWaitMs = 1800000,
+  intervalMs = 2000,
+  onProgress = null
+) {
+  const startTime = Date.now();
+  logger.info('Poll state ' + machineId + ' | max ' + Math.round(maxWaitMs/1000) + 's');
+
+  await new Promise(r => setTimeout(r, 3000));
+
+  let attempt = 0;
+  let consecutiveFails = 0;
+  let bestState = null;
+  let lastLogAt = 0;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    attempt++;
+    try {
+      const state = await getStateJson(machineId);
+      
+      if (state && state.tailscaleIp && state.tailscaleIp !== '?') {
+        bestState = state;
+        consecutiveFails = 0;
+      } else {
+        consecutiveFails++;
+      }
+      
+      if (consecutiveFails >= 30) {
+        logger.warn('Circuit breaker: 30 fails');
+        break;
+      }
+
+      if (onProgress) {
+        try { await onProgress({ attempt, state, elapsed: Date.now() - startTime }); } catch {}
+      }
+
+      if (state && state.tailscaleIp && state.tailscaleIp !== '?'
+          && state.user && state.user !== '?') {
+        logger.ok('READY attempt=' + attempt + ' t=' + Math.round((Date.now() - startTime) / 1000) + 's src=' + (state._source || '?'));
+        return { 
+          success: true, 
+          manifest: state, 
+          attempts: attempt, 
+          elapsed: Date.now() - startTime, 
+          fromLog: state._fromLog || false 
+        };
+      }
+
+      if (attempt - lastLogAt >= 15) {
+        logger.info('Poll ' + attempt + ' | src:' + (state?._source || 'none') + ' | step:' + (state?.step || '-') + ' | ' + Math.round((Date.now() - startTime) / 1000) + 's');
+        lastLogAt = attempt;
+      }
+
+      await new Promise(r => setTimeout(r, intervalMs));
+      
+    } catch (e) {
+      logger.dbg('Poll fail: ' + e.message);
+      consecutiveFails++;
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+
+  if (bestState) {
+    logger.warn('Timeout but có state partial');
+    return { success: true, manifest: bestState, attempts: attempt, elapsed: Date.now() - startTime, fallback: true };
+  }
+
+  return { success: false, error: 'Timeout ' + Math.round(maxWaitMs/1000) + 's', attempts: attempt };
+}
+
+export async function transferOwnership(machineId, newOwnerId, requesterId, isAdmin = false) {
+  const state = await getStateJson(machineId);
+  if (!state) throw new Error('Machine not found: ' + machineId);
+
+  if (!isAdmin && state.ownerDiscordId && state.ownerDiscordId !== requesterId) {
+    throw new Error('Bạn không phải chủ máy');
+  }
+
+  if (state.ownerDiscordId === newOwnerId) {
+    throw new Error('Máy đã thuộc user này');
+  }
+
+  const newState = {
+    ...state,
+    ownerDiscordId: newOwnerId,
+    previousOwnerId: state.ownerDiscordId || null,
+    transferredUtc: new Date().toISOString(),
+    transferredBy: requesterId
+  };
+
+  delete newState._fetchedAt;
+  delete newState._source;
+  delete newState._fromLog;
+  delete newState._runId;
+  delete newState._runNumber;
+
+  const rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
+  const stateAsset = rel.assets.find(a => a.name === 'state.json');
+  if (!stateAsset) throw new Error('state.json missing');
+
+  await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/assets/' + stateAsset.id, { method: 'DELETE' });
+
+  const uploadUrl = rel.upload_url.replace(/\{.*\}/, '') + '?name=state.json';
+  const jsonStr = JSON.stringify(newState, null, 2);
+  const res = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + process.env.GH_TOKEN,
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    },
+    body: jsonStr
+  });
+
+  if (!res.ok) {
+    throw new Error('Upload fail: HTTP ' + res.status);
+  }
+
+  logger.ok(`Transferred ${machineId}: ${state.ownerDiscordId} -> ${newOwnerId}`);
+  return { success: true, machineId, previousOwner: state.ownerDiscordId, newOwner: newOwnerId };
+}
+
+export async function deleteMachine(machineId, requesterId, isAdmin = false) {
+  if (!isAdmin) {
+    const owned = await isMachineOwner(requesterId, machineId);
+    if (!owned) throw new Error('Không phải máy của bạn');
+  }
+  
+  try {
+    const runs = await listRecentRuns(20);
+    const active = runs.filter(r => ['in_progress', 'queued'].includes(r.status));
+    for (const r of active) {
+      try { await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + r.id + '/cancel', { method: 'POST' }); } catch {}
+    }
+    await new Promise(r => setTimeout(r, 3000));
+  } catch {}
+  
+  try {
+    const rel = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/tags/' + tag(machineId));
+    await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/' + rel.id, { method: 'DELETE' });
+  } catch {}
+  
+  try {
+    await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/git/refs/heads/' + branch(machineId), { method: 'DELETE' });
+  } catch {}
+  
+  logger.ok('Deleted: ' + machineId);
+}
+
+export async function cancelRun(runId) {
+  await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + runId + '/cancel', { method: 'POST' });
+}
+
+export async function getRunLogTail(runId, lines = 80) {
+  try {
+    const jobs = await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/actions/runs/' + runId + '/jobs');
+    const logs = [];
+    
+    for (const job of jobs.jobs || []) {
+      try {
+        const res = await fetch(
+          'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/actions/jobs/' + job.id + '/logs',
+          {
+            headers: {
+              Authorization: 'Bearer ' + process.env.GH_TOKEN,
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28'
+            },
+            redirect: 'follow'
+          }
+        );
+        if (res.ok) {
+          const txt = await res.text();
+          logs.push(txt);
+        }
+      } catch {}
+    }
+    
+    const fullLog = logs.join('\n');
+    return fullLog.split('\n').slice(-lines).join('\n');
+  } catch (e) {
+    return 'Error: ' + e.message;
+  }
+}
+
+export async function cleanupOrphanReleases() {
+  const machines = await listMachines();
+  const orphans = [];
+  
+  for (const m of machines) {
+    const hasState = m.assets.some(a => a.name === 'state.json');
+    const hasDrive = m.assets.some(a => a.name.startsWith('zenova-drive.'));
+    
+    if (!hasState && !hasDrive) {
+      orphans.push(m);
+    }
+  }
+  
+  logger.info('Found ' + orphans.length + ' orphan releases');
+  
+  for (const o of orphans) {
+    try {
+      const age = (Date.now() - new Date(o.created).getTime()) / 1000 / 3600;
+      if (age > 1) {
+        await ghApi('/repos/' + cfg.owner + '/' + cfg.repo + '/releases/' + o.releaseId, { method: 'DELETE' });
+        logger.ok('Cleaned: ' + o.id);
+      }
+    } catch (e) {
+      logger.dbg('Clean fail ' + o.id + ': ' + e.message);
+    }
+  }
+  
+  return orphans.length;
+}

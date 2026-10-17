@@ -8,15 +8,11 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   await interaction.deferReply({ ephemeral: true });
-  
   const machineId = interaction.options.getString('machine_id');
-  const userId = interaction.user.id;
-  
-  const isOwner = await isMachineOwner(userId, machineId);
+  const isOwner = await isMachineOwner(interaction.user.id, machineId);
   if (!isOwner) {
     return interaction.editReply({ content: '❌ Bạn không phải chủ máy này.' });
   }
-  
-  await deleteMachine(machineId, userId, true);
+  await deleteMachine(machineId, interaction.user.id, true);
   await interaction.editReply({ content: `✅ Đã xoá máy \`${machineId}\`` });
 }

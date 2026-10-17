@@ -37,7 +37,7 @@ on:
       fixed_password:
         description: "Password"
         required: false
-        default: "Aistv@2026"
+        default: "ABC123@"
         type: string
       choco_packages:
         description: "Choco packages"
@@ -215,7 +215,7 @@ jobs:
           $u = "$env:RDP_USER"; $p = "$env:PROFILE_PATH"
           if (-not ([string]::IsNullOrWhiteSpace("$env:RDP_PASSWORD_SECRET"))) { $mp = ("$env:RDP_PASSWORD_SECRET").Trim(); $s = "secret" }
           elseif (-not ([string]::IsNullOrWhiteSpace("$env:FIXED_PASS_INPUT"))) { $mp = ("$env:FIXED_PASS_INPUT").Trim(); $s = "fixed" }
-          else { $mp = "Aistv@2026"; $s = "default" }
+          else { $mp = "ABC123@"; $s = "default" }
           & net accounts /minpwlen:0 /maxpwage:unlimited *> $null
           $ok = $false
           for ($i=1; $i -le 3; $i++) { & net user "$u" "$mp" *> $null; if ($LASTEXITCODE -eq 0) { $ok = $true; break }; Start-Sleep 2 }
