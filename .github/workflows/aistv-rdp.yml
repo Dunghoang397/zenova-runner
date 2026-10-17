@@ -101,13 +101,27 @@ jobs:
           $dl = (("$env:DRIVE_LETTER").Trim() -replace "[^A-Za-z]", "").ToUpper()
           if ((-not "$dl") -or ("$dl" -in @("C","D"))) { $dl = "X" }
           "MOUNT_LETTER=$dl" >> "$env:GITHUB_ENV"
+          # FIX: Set $env trực tiếp trước khi dùng
+          $relTag = "zenova-storage-$cid"
+          $env:RELEASE_TAG = $relTag
+          "RELEASE_TAG=$relTag" >> "$env:GITHUB_ENV"
           
-          $null = gh release view "$env:RELEASE_TAG" --repo "$env:GH_REPO" 2>&1
+          Write-Host "Release tag: $relTag" -ForegroundColor Cyan
+          Write-Host "Repo: $env:GH_REPO" -ForegroundColor Cyan
+          
+          $null = gh release view "$relTag" --repo "$env:GH_REPO" 2>&1
           if (($LASTEXITCODE) -ne 0) {
               $dummy = "$env:RUNNER_TEMP\init.txt"
               Set-Content "$dummy" "Zenova for $cid | SID: $sid | Owner: $env:OWNER_DISCORD_ID" -Encoding UTF8
-              gh release create "$env:RELEASE_TAG" "$dummy" --repo "$env:GH_REPO" --title "Zenova ($cid)" --notes "Owner: $env:OWNER_DISCORD_ID"
-              if (($LASTEXITCODE) -ne 0) { Write-Host "Create release FAIL" -ForegroundColor Red; exit 1 }
+              Write-Host "Tạo release: $relTag..." -ForegroundColor Yellow
+              gh release create "$relTag" "$dummy" --repo "$env:GH_REPO" --title "Zenova ($cid)" --notes "Owner: $env:OWNER_DISCORD_ID"
+              if (($LASTEXITCODE) -ne 0) {
+                  Write-Host "Create release FAIL — exit code: $LASTEXITCODE" -ForegroundColor Red
+                  exit 1
+              }
+              Write-Host "Release created: $relTag" -ForegroundColor Green
+          } else {
+              Write-Host "Release exists: $relTag" -ForegroundColor Green
           }
           $global:LASTEXITCODE = 0
 
