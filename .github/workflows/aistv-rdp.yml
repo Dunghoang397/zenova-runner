@@ -164,8 +164,8 @@ jobs:
           "SUNSHINE_PERSIST_CFG=$od\Sunshine-Config" >> "$env:GITHUB_ENV"
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" "fDenyTSConnections" 0 -Force
           $p = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
-          Set-ItemProperty "$p" "UserAuthentication" 0 -Force
-          Set-ItemProperty "$p" "SecurityLayer" 0 -Force
+          Set-ItemProperty "$p" "UserAuthentication" 1 -Force
+          Set-ItemProperty "$p" "SecurityLayer" 2 -Force
           Set-ItemProperty "$p" "fDisableAudioCapture" 0 -Type DWord -Force
           Restart-Service TermService -Force -EA SilentlyContinue
           Start-Sleep 3
@@ -228,9 +228,6 @@ jobs:
           "RDP_PASS_SOURCE=$s" >> "$env:GITHUB_ENV"
           try {
               $wl = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
-              Set-ItemProperty $wl "AutoAdminLogon" "1" -Type String -Force -EA SilentlyContinue
-              Set-ItemProperty $wl "DefaultUserName" "$u" -Type String -Force -EA SilentlyContinue
-              Set-ItemProperty $wl "DefaultPassword" "$mp" -Type String -Force -EA SilentlyContinue
           } catch {}
           "SESSION_READY=1" >> "$env:GITHUB_ENV"
 
@@ -244,7 +241,6 @@ jobs:
               ownerDiscordId = "$env:OWNER_DISCORD_ID"
               user = "$u"
               sid = "$($uO.SID.Value)"
-              password = "$env:RDP_PASS"
               passwordSource = "$env:RDP_PASS_SOURCE"
               windowsImage = "${{ inputs.windows_image }}"
               osBuild = "$env:OS_BUILD"

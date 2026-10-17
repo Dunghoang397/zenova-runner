@@ -118,7 +118,7 @@ export async function dispatchCreate(inputs) {
   }
   
   // ═══ PASSWORD: ưu tiên secret > input > state > default ═══
-  let password = 'ABC123@';
+  let password = '(Xem trong secret)';
   if (process.env.RDP_PASSWORD) {
     password = process.env.RDP_PASSWORD;
   } else if (inputs.fixed_password) {
@@ -420,13 +420,13 @@ export async function listRecentRuns(limit = 20) {
 export async function waitForWorkflowCompletion(
   machineId, 
   maxWaitMs = 1800000,
-  intervalMs = 3000,
+  intervalMs = 2000,
   onProgress = null
 ) {
   const startTime = Date.now();
-  logger.info('Poll (3-tier) ' + machineId + ' | max ' + Math.round(maxWaitMs/1000) + 's');
+  logger.info('Poll state ' + machineId + ' | max ' + Math.round(maxWaitMs/1000) + 's');
 
-  await new Promise(r => setTimeout(r, 5000));
+  await new Promise(r => setTimeout(r, 3000));
 
   let attempt = 0;
   let consecutiveFails = 0;
@@ -445,8 +445,8 @@ export async function waitForWorkflowCompletion(
         consecutiveFails++;
       }
       
-      if (consecutiveFails >= 10) {
-        logger.warn('Circuit breaker: 10 fails');
+      if (consecutiveFails >= 30) {
+        logger.warn('Circuit breaker: 30 fails');
         break;
       }
 
@@ -471,15 +471,12 @@ export async function waitForWorkflowCompletion(
         lastLogAt = attempt;
       }
 
-      const waitTime = attempt < 30 ? intervalMs : 
-                      attempt < 60 ? intervalMs * 2 : 
-                      intervalMs * 3;
-      await new Promise(r => setTimeout(r, waitTime));
+      await new Promise(r => setTimeout(r, intervalMs));
       
     } catch (e) {
       logger.dbg('Poll fail: ' + e.message);
       consecutiveFails++;
-      await new Promise(r => setTimeout(r, intervalMs * 2));
+      await new Promise(r => setTimeout(r, 3000));
     }
   }
 
