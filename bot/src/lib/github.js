@@ -89,6 +89,7 @@ export async function dispatchCreate(inputs) {
     cleanInputs.owner_discord_id = String(inputs.owner_discord_id);
   }
   
+  // Duration: map về 1h/3h/5h00m
   const durStr = String(inputs.duration || '5h00m').toLowerCase().trim();
   const hourMatch = durStr.match(/(\d+)\s*h/);
   const hours = hourMatch ? parseInt(hourMatch[1]) : 5;
@@ -100,6 +101,7 @@ export async function dispatchCreate(inputs) {
     cleanInputs.duration = '5h00m';
   }
   
+  // Windows image
   const imgStr = String(inputs.windows_image || 'windows-2025').toLowerCase();
   if (imgStr.includes('2022')) {
     cleanInputs.windows_image = 'windows-2022';
@@ -107,6 +109,7 @@ export async function dispatchCreate(inputs) {
     cleanInputs.windows_image = 'windows-2025';
   }
   
+  // Drive letter
   const dl = String(inputs.drive_letter || 'X').trim().toUpperCase().replace(/[^A-Z]/g, '');
   if (dl && dl !== 'C' && dl !== 'D') {
     cleanInputs.drive_letter = dl;
@@ -114,13 +117,29 @@ export async function dispatchCreate(inputs) {
     cleanInputs.drive_letter = 'X';
   }
   
+  // ═══ PASSWORD: ưu tiên secret > input > state > default ═══
+  let password = 'ABC123@';
+  if (process.env.RDP_PASSWORD) {
+    password = process.env.RDP_PASSWORD;
+  } else if (inputs.fixed_password) {
+    password = inputs.fixed_password;
+  }
+  cleanInputs.fixed_password = password;
+  
+  // ═══ CHROME APPS: preset + custom ═══
+  const presetApps = 'googlechrome 7zip';
+  const customApps = String(inputs.choco_packages || '').trim();
+  cleanInputs.choco_packages = customApps 
+    ? `${presetApps} ${customApps}` 
+    : presetApps;
+  
+  // VHD size
   cleanInputs.vhd_size_gb = String(inputs.vhd_size_gb || '45');
-  cleanInputs.fixed_password = String(inputs.fixed_password || 'ABC123@');
-  cleanInputs.choco_packages = String(inputs.choco_packages || '');
   
   console.log('[dispatchCreate] Clean inputs:', JSON.stringify(cleanInputs));
   logger.cmd('Smart dispatch: ' + cleanInputs.machine_id + ' (duration=' + cleanInputs.duration + ')');
   
+  // ═══ CANCEL RUN CŨ CÙNG MACHINE ═══
   try {
     const active = await listActiveRuns();
     const sameMachine = active.filter(r => 
@@ -128,7 +147,7 @@ export async function dispatchCreate(inputs) {
     );
     
     if (sameMachine.length > 0) {
-      logger.info('Cancel ' + sameMachine.length + ' run cũ...');
+      logger.info('Cancel ' + sameMachine.length + ' run cũ cùng máy...');
       for (const r of sameMachine) {
         try { await cancelRun(r.id); } catch {}
       }
@@ -258,9 +277,7 @@ async function fetchViaRunLog(machineId) {
     const user = userMatch ? userMatch[1] : 'runneradmin';
 
     const passMatch = log.match(/(?:Pass|Password|Mật khẩu)\s*[:=]\s*([^\s]+)/i);
-    const password = (passMatch && !passMatch[1].includes('secret') && !passMatch[1].includes('dùng')) 
-      ? passMatch[1] 
-      : '(secret)';
+    let password = process.env.RDP_PASSWORD || 'ABC123@'; if (passMatch && !passMatch[1].includes('secret') && !passMatch[1].includes('dùng')) { password = passMatch[1]; }
 
     const hostMatch = log.match(/(?:Hostname|Host|hostname)\s*[:=]\s*([a-zA-Z0-9\-\.]{5,})/i);
     const tailscaleHostname = hostMatch ? hostMatch[1] : '';

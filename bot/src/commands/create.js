@@ -8,6 +8,53 @@ import { logger } from '../lib/logger.js';
 import { isMember, isAdmin } from '../lib/security.js';
 import { COLORS } from '../ui/embeds.js';
 
+// ═══ ZENOVA Helper: Check owner + existing machine ═══
+async function checkOwnerAndMachine(userId, requestedMachineId) {
+  const { listMachines, getStateJson } = await import('../lib/github.js');
+  
+  // 1. Check user có máy nào chưa
+  const allMachines = await listMachines();
+  let userMachine = null;
+  
+  for (const m of allMachines) {
+    try {
+      const state = await getStateJson(m.id);
+      if (state && state.ownerDiscordId === userId) {
+        userMachine = { id: m.id, state, release: m };
+        break;
+      }
+    } catch {}
+  }
+  
+  // 2. Nếu user đã có máy VÀ máy đó đang chạy
+  if (userMachine) {
+    const isRunning = userMachine.state?.ready && userMachine.state?.status === 'ready';
+    
+    if (isRunning) {
+      // Máy cũ đang chạy → trả về thông tin
+      return {
+        hasExisting: true,
+        existingMachine: userMachine,
+        canReuse: true
+      };
+    } else {
+      // Máy cũ không chạy → cho phép tạo lại
+      return {
+        hasExisting: true,
+        existingMachine: userMachine,
+        canReuse: false,
+        reason: 'Máy cũ đã tắt, có thể tạo lại'
+      };
+    }
+  }
+  
+  // 3. User chưa có máy → OK
+  return {
+    hasExisting: false,
+    canCreate: true
+  };
+}
+
 // ═══ AUTO-INJECTED: Duration validator ═══
 function normalizeDuration(input) {
   if (!input) return '5h00m';
