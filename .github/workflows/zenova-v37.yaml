@@ -1,4 +1,4 @@
-name: Zenova RDP v26
+﻿name: Zenova RDP v26
 
 on:
   workflow_dispatch:
@@ -216,9 +216,9 @@ jobs:
           "STATE_BRANCH=zenova-state-$cid" >> "$env:GITHUB_ENV"
           
           $d = "${{ inputs.duration }}"
-          $t = 300; $disp = "5 giÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â"
-          if ($d -eq "1h") { $t = 60; $disp = "1 giÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â" }
-          if ($d -eq "3h") { $t = 180; $disp = "3 giÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â" }
+          $t = 300; $disp = "5 giÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â"
+          if ($d -eq "1h") { $t = 60; $disp = "1 giÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â" }
+          if ($d -eq "3h") { $t = 180; $disp = "3 giÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â" }
           "TOTAL_MINUTES=$t" >> "$env:GITHUB_ENV"
           "DISPLAY_TIME=$disp" >> "$env:GITHUB_ENV"
           
@@ -387,15 +387,15 @@ jobs:
           $failed = @()
           $installed = @()
           foreach ($pkg in $all) {
-              Write-Host "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â¦ CÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â i $pkg..." -ForegroundColor Cyan
+              Write-Host "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ CÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â i $pkg..." -ForegroundColor Cyan
               choco install "$pkg" -y --no-progress --limit-output --cache "$env:SHARED_OS_DIR\choco-cache"
               $code = $LASTEXITCODE
               if ($code -eq 0 -or $code -eq 3010) { $installed += $pkg } else { $failed += $pkg }
               $global:LASTEXITCODE = 0
           }
           
-          Write-Host "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Installed: $($installed -join ', ')" -ForegroundColor Green
-          if ($failed.Count -gt 0) { Write-Host "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
+          Write-Host "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ Installed: $($installed -join ', ')" -ForegroundColor Green
+          if ($failed.Count -gt 0) { Write-Host "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
           
           "APPS_READY=1" >> "$env:GITHUB_ENV"
           "INSTALLED_APPS=$($installed -join ',')" >> "$env:GITHUB_ENV"
@@ -479,7 +479,7 @@ jobs:
               
               if (((Get-Date) - $lastLog).TotalMinutes -ge 10) {
                   $h = [math]::Floor($r/3600); $m = [math]::Floor(($r%3600)/60)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | CÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â²n: ${h}h${m}m" -ForegroundColor Blue
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | CÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²n: ${h}h${m}m" -ForegroundColor Blue
                   $lastLog = Get-Date
               }
               
@@ -521,9 +521,9 @@ jobs:
           "STATE_BRANCH=zenova-state-$cid" >> "$env:GITHUB_ENV"
           
           $d = "${{ inputs.duration }}"
-          $t = 300; $disp = "5 giÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â"
-          if ($d -eq "1h") { $t = 60; $disp = "1 giÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â" }
-          if ($d -eq "3h") { $t = 180; $disp = "3 giÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â" }
+          $t = 300; $disp = "5 giÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â"
+          if ($d -eq "1h") { $t = 60; $disp = "1 giÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â" }
+          if ($d -eq "3h") { $t = 180; $disp = "3 giÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â" }
           "TOTAL_MINUTES=$t" >> "$env:GITHUB_ENV"
           "DISPLAY_TIME=$disp" >> "$env:GITHUB_ENV"
           
@@ -690,15 +690,15 @@ jobs:
           $failed = @()
           $installed = @()
           foreach ($pkg in $all) {
-              Write-Host "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â¦ CÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â i $pkg..." -ForegroundColor Cyan
+              Write-Host "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ CÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â i $pkg..." -ForegroundColor Cyan
               choco install "$pkg" -y --no-progress --limit-output --cache "$env:SHARED_OS_DIR\choco-cache"
               $code = $LASTEXITCODE
               if ($code -eq 0 -or $code -eq 3010) { $installed += $pkg } else { $failed += $pkg }
               $global:LASTEXITCODE = 0
           }
           
-          Write-Host "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Installed: $($installed -join ', ')" -ForegroundColor Green
-          if ($failed.Count -gt 0) { Write-Host "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
+          Write-Host "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ Installed: $($installed -join ', ')" -ForegroundColor Green
+          if ($failed.Count -gt 0) { Write-Host "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  Failed: $($failed -join ', ')" -ForegroundColor Yellow }
           
           "APPS_READY=1" >> "$env:GITHUB_ENV"
           "INSTALLED_APPS=$($installed -join ',')" >> "$env:GITHUB_ENV"
@@ -782,7 +782,7 @@ jobs:
               
               if (((Get-Date) - $lastLog).TotalMinutes -ge 10) {
                   $h = [math]::Floor($r/3600); $m = [math]::Floor(($r%3600)/60)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | CÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â²n: ${h}h${m}m" -ForegroundColor Blue
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive | CÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²n: ${h}h${m}m" -ForegroundColor Blue
                   $lastLog = Get-Date
               }
               
